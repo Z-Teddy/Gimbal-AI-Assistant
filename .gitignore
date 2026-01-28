@@ -1,0 +1,28 @@
+# --- Python (RK3588) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv
+.vscode/
+
+# --- Keil/STM32 (Hardware) ---
+# 忽略编译产生的垃圾
+*.o
+*.d
+*.crf
+*.dep
+*.axf
+*.htm
+*.lnp
+*.sct
+*.lst
+*.map
+*.iex
+*.uvguix.*
+*.uvoptx
+# 保留 .uvprojx 
+
+# --- General ---
+.DS_Store
+Thumbs.db
+*.log
