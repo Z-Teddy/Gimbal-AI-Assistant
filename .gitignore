@@ -2,11 +2,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.venv
+.venv/
+venv/
+.env
 .vscode/
 
-# --- Keil/STM32 (Hardware) ---
-# 忽略编译产生的垃圾
+# --- Keil / STM32 (Hardware) ---
+# 编译与中间产物
 *.o
 *.d
 *.crf
@@ -18,11 +20,24 @@ __pycache__/
 *.lst
 *.map
 *.iex
+
+# Keil 用户/界面状态文件
 *.uvguix.*
 *.uvoptx
-# 保留 .uvprojx 
 
-# --- General ---
+# 保留工程文件
+# *.uvprojx
+
+# --- Local history / editor temp ---
+.history/
+**/.history/
+
+# --- Logs / runtime ---
+*.log
+
+# --- OS files ---
 .DS_Store
 Thumbs.db
-*.log
+
+# --- Private docs ---
+docs_private/

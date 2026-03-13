@@ -7,6 +7,7 @@
 @Repo    : https://github.com/Z-Teddy/Gimbal-AI-Assistant
 """
 
+import logging
 import time
 import serial
 
@@ -27,18 +28,85 @@ class SerialController:
         
         实例化协议处理对象，并尝试打开串口连接。
         """
+        serial_cfg = config.get_settings().get("serial", {})
+
         # 1. 实例化协议处理类
         self.protocol = GimbalProtocol()
-        
+        self.logger = logging.getLogger(__name__)
+        self.reconnect_interval_sec = max(
+            0.1,
+            float(serial_cfg.get("reconnect_interval_sec", 2.0)),
+        )
         self.last_send_time = 0
         self.ser = None
+        self.next_reconnect_time = 0.0
+
+        self._connect(initial=True)
+
+    def _connect(self, initial: bool):
+        """尝试建立串口连接"""
+        if initial:
+            action = "正在连接串口"
+        else:
+            action = "尝试重连串口"
+
+        self.logger.info(
+            "%s port=%s baud=%s",
+            action,
+            config.SERIAL_PORT,
+            config.BAUD_RATE,
+        )
 
         try:
             # 根据配置文件初始化串口 (timeout=0.1 防止阻塞)
             self.ser = serial.Serial(config.SERIAL_PORT, config.BAUD_RATE, timeout=0.1)
-            print(f"[Serial] 成功连接至 {config.SERIAL_PORT}")
-        except Exception as e:
-            print(f"[Serial] 连接失败: {e}")
+            self.next_reconnect_time = 0.0
+            if initial:
+                self.logger.info("串口首次连接成功: %s", config.SERIAL_PORT)
+            else:
+                self.logger.info("串口重连成功: %s", config.SERIAL_PORT)
+            return True
+        except Exception as exc:
+            self.ser = None
+            self.next_reconnect_time = time.monotonic() + self.reconnect_interval_sec
+            if initial:
+                self.logger.warning(
+                    "串口首次连接失败: %s，将在 %.2f 秒后重试",
+                    exc,
+                    self.reconnect_interval_sec,
+                )
+            else:
+                self.logger.warning(
+                    "串口重连失败: %s，将在 %.2f 秒后继续尝试",
+                    exc,
+                    self.reconnect_interval_sec,
+                )
+            return False
+
+    def _disconnect(self, reason: str):
+        """关闭当前串口并进入断开状态"""
+        if self.ser is not None:
+            self.logger.warning("关闭当前串口连接: %s", reason)
+            try:
+                if self.ser.is_open:
+                    self.ser.close()
+            except Exception as exc:
+                self.logger.warning("关闭串口时出现异常: %s", exc)
+            finally:
+                self.ser = None
+
+        self.next_reconnect_time = time.monotonic() + self.reconnect_interval_sec
+
+    def try_reconnect(self):
+        """未连接时按固定时间间隔尝试重连"""
+        if self.ser is not None and self.ser.is_open:
+            return
+
+        now = time.monotonic()
+        if now < self.next_reconnect_time:
+            return
+
+        self._connect(initial=False)
 
     def send_coordinates(self, x: int, y: int):
         """
@@ -84,10 +152,16 @@ class SerialController:
             self.ser.write(packet)
             # 调试打印 (建议在生产环境中注释掉)
             # print(f"[TX] Hex: {packet.hex().upper()}")
-        except Exception as e:
-            print(f"[Serial] 发送错误: {e}")
+        except Exception as exc:
+            self.logger.error("串口发送失败: %s", exc)
+            self._disconnect("发送失败")
 
     def close(self):
         """关闭串口资源"""
-        if self.ser:
-            self.ser.close()
+        if self.ser is not None:
+            self.logger.info("关闭串口资源")
+            try:
+                if self.ser.is_open:
+                    self.ser.close()
+            finally:
+                self.ser = None

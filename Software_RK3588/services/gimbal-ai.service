@@ -1,0 +1,19 @@
+[Unit]
+Description=Gimbal AI Assistant (RK3588 Headless)
+After=network.target
+
+[Service]
+Type=simple
+# Replace USER_NAME with the Linux user that should run this service.
+User=USER_NAME
+# Replace the paths below with the absolute path to your Software_RK3588 directory.
+WorkingDirectory=/abs/path/to/Gimbal-AI-Assistant-private/Software_RK3588
+ExecStart=/abs/path/to/Gimbal-AI-Assistant-private/Software_RK3588/scripts/run_headless.sh
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

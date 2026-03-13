@@ -1,117 +1,239 @@
 # Gimbal-AI-Assistant
 
-[![Platform](https://img.shields.io/badge/Platform-RK3588%20%7C%20STM32-blue)](https://www.rockchip.com.cn/)
+[![Platform](https://img.shields.io/badge/Platform-RK3588%20%7C%20STM32-blue)](https://www.rock-chips.com/)
 [![Language](https://img.shields.io/badge/Language-Python%20%7C%20C-green)]()
 [![License](https://img.shields.io/badge/License-MIT-orange)](LICENSE)
 
+## 项目定位
+
+**长期目标：基于 RK3588 + STM32 异构架构的桌面级嵌入式智能体系统**
+
+**当前阶段：基于 RK3588 + STM32 的异构嵌入式视觉云台系统**
+
+`Gimbal-AI-Assistant` 的长期方向，不是单一的视觉云台功能，而是逐步构建一个具备感知、控制与交互能力的桌面级嵌入式智能体助手。
+
+当前仓库对应的是这个长期目标的第一阶段实现：先围绕“视觉感知 + 云台执行 + Linux 侧工程化”做出一个最小但可运行、可恢复、可部署准备的系统闭环。
+
 ## 项目简介
-**Gimbal-AI-Assistant** 是一款基于异构计算架构的桌面级智能交互终端。项目旨在探索嵌入式边缘计算与运动控制的协同应用，打造一个具备感知、决策与执行能力的桌面机器人。
 
-系统采用 **“上位机决策 + 下位机执行”** 的异构架构：
-* **上位机 (Host)**：采用 **RK3588 (Orange Pi 5 Plus)**，利用其突出的 CPU/NPU 算力，负责图像采集、计算机视觉算法处理、多模态大模型推理及高层决策。
-* **下位机 (Slave)**：采用 **STM32F103 (野火指南者)**，运行 FreeRTOS 实时操作系统，负责高频 PID 闭环控制、多路舵机 PWM 生成及 OLED/UART 外设逻辑控制。
+项目采用“RK3588 负责感知与上层运行管理，STM32 负责底层控制与执行”的分工方式：
 
-当前版本 (v1.0) 已实现基于计算机视觉的**人脸锁定与实时跟随**功能。
+- RK3588 / OrangePi 负责摄像头采集、OpenCV Haar Cascade 人脸检测、目标中心坐标生成、坐标映射、串口发送，以及 Linux 侧的配置管理、日志、运行模式和异常恢复。
+- STM32 负责接收 RK3588 发来的目标坐标，并执行下位机控制与云台驱动相关逻辑。当前仓库中已包含 FreeRTOS / PID / PWM / Servo / 协议相关代码基础。
 
-## 硬件架构
+当前之所以先从视觉云台切入，是因为它同时覆盖了摄像头输入、视觉检测、串口通信、下位机控制、舵机执行与 Linux 侧部署，是整个项目走向更完整桌面助手形态的第一块工程基石。
 
-系统硬件分为计算层、控制层与执行层：
+当前主链路仍保持为：
 
-| 模块 | 硬件型号/规格 | 功能描述 |
+```text
+read -> detect -> send -> display
+```
+
+当前版本重点聚焦 RK3588 Linux 侧第一轮工程化能力建设，包括配置管理、日志、双模式运行、设备异常恢复与部署入口准备。
+
+## 当前已实现能力 / 项目亮点
+
+### 系统功能
+
+- 基于 OpenCV Haar Cascade 的人脸检测
+- 目标中心坐标生成与视觉坐标到控制坐标的映射
+- RK3588 + STM32 异构协同：上位机负责视觉与运行管理，下位机负责底层控制执行
+- 串口链路完成目标坐标下发，并与 STM32 下位机控制逻辑打通
+- 已形成从视觉输入、目标中心点生成、串口下发到底层执行的最小功能闭环
+
+### RK3588 Linux 侧工程化
+
+- YAML 配置加载：运行参数集中管理在 `Software_RK3588/configs/default.yaml`
+- logging：同时输出到控制台与文件 `Software_RK3588/logs/rk3588_tracker.log`
+- GUI / headless 双模式：支持本地调试与后台运行
+- camera recovery：摄像头连续读帧失败后自动释放并重连
+- serial reconnect：串口初始化失败或发送失败后自动重连
+- `scripts/run_headless.sh`：headless 启动脚本
+- `services/gimbal-ai.service`：systemd service 模板
+
+### 当前已验证情况
+
+- GUI 模式可正常启动
+- headless 模式可正常启动
+- camera recovery 已做热插拔验证
+- serial reconnect 已做断开恢复验证
+- `scripts/run_headless.sh` 已手动验证可正常启动
+- `gimbal-ai.service` 当前已提供模板文件，但尚未写成自动安装/启用脚本
+
+## 系统硬件组成
+
+| 模块 | 硬件型号 / 规格 | 当前角色 |
 | :--- | :--- | :--- |
-| **上位机** | RK3588 (Orange Pi 5 Plus, 8GB) | 运行 Linux 系统，负责图像采集、视觉算法处理、串口通讯 |
-| **下位机** | STM32F103VET6 (野火指南者) | 运行 FreeRTOS，负责 PID 运算、PWM 输出、OLED 驱动 |
-| **执行器** | SG90 舵机 x 2 | 构成二自由度（Pitch/Yaw）云台结构 |
-| **视觉传感器** | 200W 像素 USB 摄像头 | 视频流采集 (640x480 分辨率) |
-| **显示模块** | 0.96寸 OLED (SSD1306) | 显示系统状态、IP 地址及追踪坐标数据 |
-| **通信链路** | 板载 CH340 (USB-MiniUSB) | 通过开发板集成的 USB 转串口芯片实现 UART 通信 |
+| 上位机 | RK3588（Orange Pi 5 Plus） | 运行 Linux 侧视觉与工程化逻辑 |
+| 下位机 | STM32F103VET6（野火指南者） | 运行底层控制与执行逻辑 |
+| 视觉传感器 | USB 摄像头 | 提供图像输入 |
+| 执行器 | SG90 舵机 x2 | 构成二自由度云台 |
+| 显示模块 | 0.96 寸 OLED（SSD1306） | 用于下位机状态显示 |
+| 通信链路 | UART / USB 转串口 | RK3588 与 STM32 间坐标通信 |
 
-## 目录结构
+## 系统架构说明（简版）
 
-本仓库包含上位机软件与下位机固件两部分：
+当前系统的基本数据流如下：
+
+1. 摄像头采集图像帧
+2. RK3588 执行人脸检测
+3. 计算主目标中心坐标
+4. 坐标映射到 STM32 控制坐标系
+5. 通过串口发送到 STM32
+6. STM32 接收后执行底层控制并驱动云台
+
+更完整的说明见：
+
+- [docs/system_architecture.md](docs/system_architecture.md)
+
+## 仓库结构
 
 ```text
 Gimbal-AI-Assistant/
-├── Hardware_STM32/          # 下位机固件源码 (基于 Keil MDK)
-│   ├── User/                # 用户应用层代码 (PID算法, 通信协议, 任务调度)
-│   ├── FreeRTOS/            # 实时操作系统内核
-│   ├── Libraries/           # STM32 标准库与 CMSIS
-│   └── Project/             # Keil 工程文件 (.uvprojx)
-│
-├── Software_RK3588/         # 上位机软件源码 (基于 Python)
+├── Hardware_STM32/              # STM32 下位机固件工程
+│   ├── FreeRTOS/
+│   ├── Libraries/
+│   ├── Project/
+│   └── User/
+├── Software_RK3588/             # RK3588 / OrangePi 侧软件
 │   ├── app/
-│   │   ├── models/          # 算法模型文件存放目录
-│   │   ├── vision.py        # 视觉处理模块 (OpenCV Haar/RKNN)
-│   │   └── serial_ctrl.py   # 串口通信与协议封装
-│   ├── config.py            # 系统参数配置文件 (串口号, 摄像头ID, PID参数)
-│   ├── main.py              # 程序主入口
-│   └── requirements.txt     # Python 依赖库清单
-│
-└── README.md                # 项目说明文档
-
+│   │   ├── camera_manager.py    # 摄像头管理与自动恢复
+│   │   ├── logging_setup.py     # 日志初始化
+│   │   ├── protocol.py          # 串口协议打包
+│   │   ├── serial_ctrl.py       # 串口发送与自动重连
+│   │   ├── settings.py          # YAML 加载与配置校验
+│   │   └── vision.py            # 人脸检测与画面标注
+│   ├── configs/
+│   │   └── default.yaml         # 默认配置文件
+│   ├── logs/                    # 运行日志目录
+│   ├── scripts/
+│   │   └── run_headless.sh      # headless 启动脚本
+│   ├── services/
+│   │   └── gimbal-ai.service    # systemd service 模板
+│   ├── config.py                # 配置兼容层
+│   ├── main.py                  # 程序入口
+│   └── requirements.txt         # Python 依赖
+├── docs/
+│   ├── deployment_orangepi.md   # OrangePi / RK3588 部署与运行说明
+│   └── system_architecture.md   # 系统架构说明
+├── LICENSE
+└── README.md
 ```
-
-## 功能特性
-
-### 当前版本 (v1.0)
-
-* **视觉追踪**：基于 OpenCV Haar Cascade 分类器实现人脸检测，模拟人眼注视效果。
-* **运动控制**：下位机部署增量式 PID 算法，驱动二自由度云台实现目标跟随。
-* **异构通信**：设计了基于帧头/帧尾校验的 UART 通信协议，确保指令传输的完整性。
-* **状态监视**：OLED 屏幕实时刷新当前追踪目标的坐标及系统工作模式。
-
-### 开发计划 (Roadmap)
-
-* **v2.0 (NPU 加速)**：迁移视觉算法至 RK3588 NPU，部署 RKNN 量化版 YOLOv8 模型，提升在复杂背景、侧脸及遮挡环境下的识别鲁棒性。
-* **v3.0 (语音交互)**：在 RK3588 CPU 端部署离线语音识别（ASR）模型，实现通过语音指令控制云台模式（如追踪/复位/扫描）。
-* **v4.0 (多模态集成)**：部署轻量化大语言模型（Qwen），结合语音输入控制 OLED 显示内容（如表情符号），实现多模态交互。
 
 ## 快速开始
 
-### 1. 环境准备
+### 1. STM32 侧基本说明
 
-* **STM32 开发环境**：Keil uVision 5，需安装 STM32F1 系列 Pack。
-* **RK3588 开发环境**：Ubuntu 20.04/22.04 或类似 Linux 发行版，Python 3.8+。
+- 使用 Keil 打开 `Hardware_STM32/Project` 下的工程文件
+- 编译并烧录到 STM32 开发板
+- 确认串口、电源、舵机和 OLED 连接正常
 
-### 2. 硬件连接
-
-1.  **视觉输入**：将 USB 摄像头连接至 Orange Pi 5 的任意 USB 接口。
-2.  **通信链路**：使用 **MiniUSB 数据线** 连接 STM32 开发板的 **"USB转串口"** 接口与 Orange Pi 5 的 USB 接口。
-    * *注：野火指南者开发板板载 CH340 芯片，内部已连接至 USART1 (PA9/PA10)，无需外部 USB-TTL 模块。*
-3.  **执行器 (舵机)**：
-    * **X 轴 (Yaw/水平)**：信号线接 **PA2** (TIM2_CH3)，VCC 接 5V。
-    * **Y 轴 (Pitch/垂直)**：信号线接 **PA3** (TIM2_CH4)，VCC 接 5V。
-    * *⚠️ 注意：舵机建议接 5V 电源以保证驱动力，并确保与开发板共地。*
-4.  **显示模块 (OLED)**：
-    * **SCL** 接 **PB8**
-    * **SDA** 接 **PB9**
-    * VCC 接 3.3V
-
-### 3. 部署与运行
-
-**下位机 (STM32):**
-
-1. 进入 `Hardware_STM32/Project` 目录。
-2. 使用 Keil 打开工程文件，编译并烧录至 STM32 开发板。
-3. 复位开发板，确认 OLED 屏幕正常点亮并显示初始化界面。
-
-**上位机 (RK3588):**
+### 2. RK3588 侧环境准备
 
 ```bash
-# 克隆仓库
-git clone [https://github.com/Z-Teddy/Gimbal-AI-Assistant.git](https://github.com/Z-Teddy/Gimbal-AI-Assistant.git)
-
-# 进入软件目录
-cd Gimbal-AI-Assistant/Software_RK3588
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 运行主程序 (建议在连接显示器的桌面环境下运行以查看可视化窗口)
-sudo python3 main.py
-
+cd Software_RK3588
+python3 -m pip install -r requirements.txt
 ```
+
+如使用虚拟环境，请先激活对应环境；在 headless 场景下，也可以直接使用 `scripts/run_headless.sh` 作为统一启动入口。
+
+### 3. 启动方式
+
+#### GUI 模式
+
+适用场景：本地连接显示器，观察 OpenCV 可视化窗口和目标框。
+
+```bash
+cd Software_RK3588
+python main.py --gui --config configs/default.yaml
+```
+
+#### headless 模式
+
+适用场景：无显示器、后台运行或为后续 systemd 托管做验证。
+
+```bash
+cd Software_RK3588
+python main.py --headless --config configs/default.yaml
+```
+
+#### `run_headless.sh` 脚本
+
+适用场景：统一的 headless 启动入口，适合手动执行，也适合被 service 调用。
+
+```bash
+bash Software_RK3588/scripts/run_headless.sh
+```
+
+### 4. 日志查看
+
+控制台日志会直接输出到终端，同时也会写入文件：
+
+```bash
+tail -f Software_RK3588/logs/rk3588_tracker.log
+```
+
+## 文档入口
+
+- [系统架构说明](docs/system_architecture.md)
+- [OrangePi / RK3588 部署与运行说明](docs/deployment_orangepi.md)
+
+如果后续需要通过 systemd 托管运行，可参考：
+
+- `Software_RK3588/services/gimbal-ai.service`
+
+需要注意，`gimbal-ai.service` 当前只是模板文件，不表示仓库已经提供完整的自动安装、自动启用流程。
+
+## 当前限制
+
+- 摄像头当前依赖固定 `camera.index`
+- 串口当前依赖固定 `serial.port`
+- 当前视觉算法仍为 OpenCV Haar Cascade
+- 更复杂的设备发现机制尚未实现
+- 更完整的协议状态机 / 心跳 / safe mode 尚未实现
+- `gimbal-ai.service` 当前仍处于模板化准备阶段
+
+## 发展路径
+
+以下内容属于项目的后续方向，不代表当前已经实现：
+
+### 阶段 1：视觉云台最小闭环
+
+当前已完成的重点包括：
+
+- RK3588 + STM32 异构主链路打通
+- OpenCV Haar Cascade 人脸检测
+- GUI / headless 双模式
+- YAML 配置加载
+- logging
+- camera recovery
+- serial reconnect
+- `run_headless.sh`
+- `gimbal-ai.service` 模板准备
+
+### 阶段 2：更强感知与模型部署
+
+后续可继续推进：
+
+- 更强的人脸检测或目标检测模型
+- RKNN / NPU 加速路线评估与落地
+- 更稳定的设备发现机制
+
+### 阶段 3：交互与模式扩展
+
+后续可继续推进：
+
+- 更多运行模式与控制模式
+- 更完整的协议状态管理与运行监控
+- 更完善的部署脚本与 systemd 安装流程
+
+### 阶段 4：向更完整的桌面级智能体形态扩展
+
+更长期的方向包括：
+
+- 在稳定的感知与控制底座上逐步扩展更丰富的交互与任务调度能力
+- 从单一视觉云台系统走向更完整的桌面级嵌入式智能体 / 桌面助手形态
 
 ## 许可证
 
-本项目代码遵循 MIT License 开源协议。
+本项目遵循 [MIT License](LICENSE)。

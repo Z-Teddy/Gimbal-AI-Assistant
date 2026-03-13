@@ -7,15 +7,31 @@
 @Repo    : https://github.com/Z-Teddy/Gimbal-AI-Assistant
 """
 
+import argparse
+import logging
 import os
-# [Environment Config]
-# 强制指定显示输出到本地 HDMI 屏幕 (:0)
-os.environ["DISPLAY"] = ":0"
 
-import cv2
 import config
-from app.vision import FaceDetector
-from app.serial_ctrl import SerialController
+from app.logging_setup import setup_logging
+
+
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description="RK3588 AI Tracker")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--gui", action="store_true", help="以 GUI 模式运行")
+    mode_group.add_argument("--headless", action="store_true", help="以无界面模式运行")
+    parser.add_argument("--config", default=None, help="指定 YAML 配置文件路径")
+    return parser.parse_args()
+
+
+def resolve_mode_override(args):
+    """解析 CLI 模式覆盖参数"""
+    if args.gui:
+        return "gui"
+    if args.headless:
+        return "headless"
+    return None
 
 def main():
     """
@@ -31,32 +47,45 @@ def main():
        - 本地 HDMI 显示
     4. 资源释放与退出
     """
-    print("=== RK3588 异构云台追踪系统启动 ===")
-    
+    args = parse_args()
+    config.configure(args.config, mode_override=resolve_mode_override(args))
+    log_path = setup_logging(config.get_logging_config())
+    logger = logging.getLogger(__name__)
+
+    logger.info("=== RK3588 异构云台追踪系统启动 ===")
+    logger.info("配置文件: %s", config.CONFIG_PATH)
+    logger.info("运行模式: %s", config.RUNTIME_MODE)
+    logger.info("日志文件: %s", log_path)
+
+    if config.RUNTIME_MODE == "gui" and config.RUNTIME_DISPLAY:
+        os.environ.setdefault("DISPLAY", config.RUNTIME_DISPLAY)
+        logger.info("GUI 显示输出: %s", os.environ.get("DISPLAY"))
+
+    import cv2
+    from app.camera_manager import CameraManager
+    from app.serial_ctrl import SerialController
+    from app.vision import FaceDetector
+
     # 1. [System Init] 实例化核心功能模块
     tracker = FaceDetector()
     comm = SerialController()
+    camera = CameraManager()
 
-    # 2. [Camera Setup] 配置并打开视频捕获设备
-    print(f"[Main] 正在打开摄像头 index={config.CAM_INDEX}...")
-    cap = cv2.VideoCapture(config.CAM_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAM_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAM_HEIGHT)
-
-    # 检查硬件是否就绪
-    if not cap.isOpened():
-        print("[Error] 无法打开摄像头！请检查 config.py 配置。")
-        return
-
-    print("[Main] 系统就绪，按下 'q' 键退出。")
+    if config.RUNTIME_MODE == "gui":
+        logger.info("系统就绪，按下 'q' 键退出。")
+    else:
+        logger.info("系统就绪，当前为 headless 模式，使用 Ctrl+C 退出。")
 
     try:
         while True:
             # 3. [Frame Capture] 读取当前视频帧
-            ret, frame = cap.read()
-            if not ret:
-                print("[Error] 摄像头断开，停止采集")
-                break
+            frame = camera.read_frame()
+            if frame is None:
+                comm.try_reconnect()
+                if config.RUNTIME_MODE == "gui":
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                continue
 
             # 4. [Visual Processing] 执行人脸检测算法并绘制 UI
             # processed_frame: 带有画框和文字的图片
@@ -64,6 +93,7 @@ def main():
             processed_frame, target = tracker.process_frame(frame)
 
             # 5. [Serial Communication] 目标坐标解算与发送
+            comm.try_reconnect()
             if target:
                 # Case A: 检测到目标 -> 发送实时坐标
                 comm.send_coordinates(target[0], target[1])
@@ -74,23 +104,27 @@ def main():
                 pass
 
             # 6. [GUI Display] 实时渲染处理后的画面 (HDMI Out)
-            cv2.imshow('RK3588 AI Tracker', processed_frame)
+            if config.RUNTIME_MODE == "gui":
+                cv2.imshow(config.WINDOW_NAME, processed_frame)
 
-            # 7. [Exit Strategy] 检测退出信号
-            # 等待 1ms，如果按下 'q' 键则跳出循环
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+                # 7. [Exit Strategy] 检测退出信号
+                # 等待 1ms，如果按下 'q' 键则跳出循环
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
     except KeyboardInterrupt:
         # 捕获 Ctrl+C 中断信号
-        print("\n[Main] 用户中断 (KeyboardInterrupt)")
+        logger.info("用户中断 (KeyboardInterrupt)")
     
     finally:
         # [Resource Release] 安全释放硬件资源
-        cap.release()
-        cv2.destroyAllWindows()
+        camera.close()
+        if config.RUNTIME_MODE == "gui":
+            cv2.destroyAllWindows()
         comm.close()
-        print("[Main] 系统资源已释放，程序结束")
+        logger.info("系统资源已释放，程序结束")
+
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
