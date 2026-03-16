@@ -14,6 +14,28 @@ serial:
   send_interval: 0.04
   reconnect_interval_sec: 2.0
 
+detector:
+  type: "haar_face"
+
+protocol:
+  heartbeat_enabled: false
+  heartbeat_interval_sec: 1.0
+  no_target_enabled: false
+  no_target_interval_sec: 0.2
+  mode_command_enabled: false
+
+control:
+  default_mode: "track"
+  target_lost_timeout_sec: 0.3
+  lost_confirm_frames: 2
+  reacquire_confirm_frames: 2
+  no_target_mode: "hold"
+  return_home_after_sec: 0.0
+  home_x: 320
+  home_y: 240
+  scan_enabled: false
+  scan_interval_sec: 1.0
+
 runtime:
   mode: "gui"
   window_name: "RK3588 AI Tracker"

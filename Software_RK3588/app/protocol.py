@@ -9,6 +9,7 @@
 
 import struct
 
+
 class GimbalProtocol:
     """
     云台通信协议处理类
@@ -24,10 +25,29 @@ class GimbalProtocol:
     HEAD2 = 0x55
 
     # --- 功能字 (Command ID) ---
-    CMD_HEARTBEAT      = 0x01  # 心跳包 
+    CMD_HEARTBEAT      = 0x01  # 心跳包: [seq(uint8), flags(uint8)]
     CMD_TRACK_FACE     = 0x02  # 视觉追踪: [x(int16), y(int16)]
     CMD_SET_ANGLE      = 0x03  # 语音强控: [yaw(float), pitch(float)]
     CMD_SET_EXPRESSION = 0x04  # 表情切换: [face_id(uint8)]
+    CMD_NO_TARGET      = 0x05  # 目标丢失: [reason(uint8)]
+    CMD_SET_MODE       = 0x06  # 模式切换: [mode(uint8)]
+
+    # --- 状态码 / 枚举值 ---
+    NO_TARGET_REASON_LOST = 0x00
+    NO_TARGET_REASON_CAMERA = 0x01
+    NO_TARGET_REASON_DETECTOR = 0x02
+
+    MODE_TRACK = 0x00
+    MODE_HOLD = 0x01
+    MODE_RETURN_HOME = 0x02
+    MODE_SCAN = 0x03
+
+    _MODE_NAME_TO_VALUE = {
+        "track": MODE_TRACK,
+        "hold": MODE_HOLD,
+        "return_home": MODE_RETURN_HOME,
+        "scan": MODE_SCAN,
+    }
 
     def _pack(self, cmd_id, payload=b''):
         """
@@ -59,6 +79,23 @@ class GimbalProtocol:
         tail = struct.pack('B', checksum)
         
         return header + payload + tail
+
+    def pack_heartbeat(self, seq=0, status_flags=0):
+        """
+        打包心跳包 (CMD: 0x01)
+
+        使用 2 字节载荷而不是空载荷，便于后续 STM32 侧扩展状态位，
+        也避免零长度帧在旧解析器中直接被丢弃。
+
+        Args:
+            seq (int): 心跳序号 (uint8)
+            status_flags (int): 状态位保留字段 (uint8)
+
+        Returns:
+            bytes: 打包后的协议帧
+        """
+        payload = struct.pack('BB', int(seq) & 0xFF, int(status_flags) & 0xFF)
+        return self._pack(self.CMD_HEARTBEAT, payload)
 
     def pack_face_data(self, x, y):
         """
@@ -94,6 +131,39 @@ class GimbalProtocol:
         # '<ff': 小端模式, 两个 float (32-bit IEEE 754)
         payload = struct.pack('<ff', float(yaw), float(pitch))
         return self._pack(self.CMD_SET_ANGLE, payload)
+
+    def pack_no_target(self, reason_code=NO_TARGET_REASON_LOST):
+        """
+        打包无目标状态通知 (CMD: 0x05)
+
+        Args:
+            reason_code (int): 无目标原因码 (uint8)
+
+        Returns:
+            bytes: 打包后的协议帧
+        """
+        payload = struct.pack('B', int(reason_code) & 0xFF)
+        return self._pack(self.CMD_NO_TARGET, payload)
+
+    def pack_mode(self, mode):
+        """
+        打包模式切换命令 (CMD: 0x06)
+
+        Args:
+            mode (str | int): 模式名称或模式值
+
+        Returns:
+            bytes: 打包后的协议帧
+        """
+        if isinstance(mode, str):
+            if mode not in self._MODE_NAME_TO_VALUE:
+                raise ValueError(f"不支持的模式名: {mode}")
+            mode_value = self._MODE_NAME_TO_VALUE[mode]
+        else:
+            mode_value = int(mode) & 0xFF
+
+        payload = struct.pack('B', mode_value)
+        return self._pack(self.CMD_SET_MODE, payload)
 
     def pack_expression(self, face_id):
         """

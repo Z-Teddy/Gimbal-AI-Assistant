@@ -31,6 +31,28 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
         "send_interval": 0.04,
         "reconnect_interval_sec": 2.0,
     },
+    "detector": {
+        "type": "haar_face",
+    },
+    "protocol": {
+        "heartbeat_enabled": False,
+        "heartbeat_interval_sec": 1.0,
+        "no_target_enabled": False,
+        "no_target_interval_sec": 0.2,
+        "mode_command_enabled": False,
+    },
+    "control": {
+        "default_mode": "track",
+        "target_lost_timeout_sec": 0.3,
+        "lost_confirm_frames": 2,
+        "reacquire_confirm_frames": 2,
+        "no_target_mode": "hold",
+        "return_home_after_sec": 0.0,
+        "home_x": 320,
+        "home_y": 240,
+        "scan_enabled": False,
+        "scan_interval_sec": 1.0,
+    },
     "runtime": {
         "mode": "gui",
         "window_name": "RK3588 AI Tracker",
@@ -99,9 +121,19 @@ def _require_positive_number(section: Dict[str, Any], key: str) -> float:
     return value
 
 
+def _require_bool(section: Dict[str, Any], key: str) -> bool:
+    value = section.get(key)
+    if not isinstance(value, bool):
+        raise ValueError(f"配置项 '{key}' 必须是布尔值")
+    return value
+
+
 def _validate_settings(settings: Dict[str, Any]) -> None:
     camera = _require_dict(settings, "camera")
     serial = _require_dict(settings, "serial")
+    detector = _require_dict(settings, "detector")
+    protocol = _require_dict(settings, "protocol")
+    control = _require_dict(settings, "control")
     runtime = _require_dict(settings, "runtime")
     logging_cfg = _require_dict(settings, "logging")
 
@@ -119,6 +151,31 @@ def _validate_settings(settings: Dict[str, Any]) -> None:
     _require_int(serial, "stm32_height", minimum=1)
     _require_number(serial, "send_interval", minimum=0.0)
     _require_positive_number(serial, "reconnect_interval_sec")
+
+    _require_str(detector, "type")
+
+    _require_bool(protocol, "heartbeat_enabled")
+    _require_positive_number(protocol, "heartbeat_interval_sec")
+    _require_bool(protocol, "no_target_enabled")
+    _require_positive_number(protocol, "no_target_interval_sec")
+    _require_bool(protocol, "mode_command_enabled")
+
+    if control.get("default_mode") not in {"track", "hold", "return_home", "scan"}:
+        raise ValueError(
+            "配置项 'control.default_mode' 仅支持 'track'、'hold'、'return_home' 或 'scan'"
+        )
+    _require_number(control, "target_lost_timeout_sec", minimum=0.0)
+    _require_int(control, "lost_confirm_frames", minimum=1)
+    _require_int(control, "reacquire_confirm_frames", minimum=1)
+    if control.get("no_target_mode") not in {"hold", "return_home", "scan"}:
+        raise ValueError(
+            "配置项 'control.no_target_mode' 仅支持 'hold'、'return_home' 或 'scan'"
+        )
+    _require_number(control, "return_home_after_sec", minimum=0.0)
+    _require_int(control, "home_x", minimum=0)
+    _require_int(control, "home_y", minimum=0)
+    _require_bool(control, "scan_enabled")
+    _require_positive_number(control, "scan_interval_sec")
 
     if runtime.get("mode") not in {"gui", "headless"}:
         raise ValueError("配置项 'runtime.mode' 仅支持 'gui' 或 'headless'")

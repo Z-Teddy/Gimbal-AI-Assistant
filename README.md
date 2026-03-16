@@ -29,16 +29,19 @@
 read -> detect -> send -> display
 ```
 
-当前版本重点聚焦 RK3588 Linux 侧第一轮工程化能力建设，包括配置管理、日志、双模式运行、设备异常恢复与部署入口准备。
+当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v2.0 第一轮：具备最小状态、模式、保护和 detector 模块化能力的异构嵌入式系统原型**。
 
 ## 当前已实现能力 / 项目亮点
 
 ### 系统功能
 
 - 基于 OpenCV Haar Cascade 的人脸检测
+- detector 模块化第一轮完成，默认 `detector.type = "haar_face"`
 - 目标中心坐标生成与视觉坐标到控制坐标的映射
 - RK3588 + STM32 异构协同：上位机负责视觉与运行管理，下位机负责底层控制执行
-- 串口链路完成目标坐标下发，并与 STM32 下位机控制逻辑打通
+- 最小模式状态机：`track / hold / return_home`（`scan` 当前仅保留占位）
+- 主循环去抖 / 滞回优化，降低瞬时漏检导致的 `track <-> hold` 抖动
+- 串口链路完成目标坐标、heartbeat、no-target 的最小状态化发送，并与 STM32 下位机控制逻辑打通
 - 已形成从视觉输入、目标中心点生成、串口下发到底层执行的最小功能闭环
 
 ### RK3588 Linux 侧工程化
@@ -49,7 +52,10 @@ read -> detect -> send -> display
 - camera recovery：摄像头连续读帧失败后自动释放并重连
 - serial reconnect：串口初始化失败或发送失败后自动重连
 - `scripts/run_headless.sh`：headless 启动脚本
+- `scripts/install_service.sh` / `scripts/uninstall_service.sh`：systemd 服务安装与卸载
+- `scripts/find_devices.sh`：设备发现与配置提示脚本
 - `services/gimbal-ai.service`：systemd service 模板
+- `docs/communication_protocol.md`：当前真实协议文档
 
 ### 当前已验证情况
 
@@ -58,7 +64,10 @@ read -> detect -> send -> display
 - camera recovery 已做热插拔验证
 - serial reconnect 已做断开恢复验证
 - `scripts/run_headless.sh` 已手动验证可正常启动
-- `gimbal-ai.service` 当前已提供模板文件，但尚未写成自动安装/启用脚本
+- detector 模块化第一轮已做回归，默认 `haar_face` 下行为保持稳定
+- 主循环去抖 / 滞回优化已做实测，`track <-> hold` 高频抖动明显降低
+- heartbeat / no-target / link-timeout safe hold 的最小双端状态闭环已验证通过
+- 串口中途断开后，serial reconnect 与 camera recovery 链路保持可用
 
 ## 系统硬件组成
 
@@ -98,22 +107,27 @@ Gimbal-AI-Assistant/
 ├── Software_RK3588/             # RK3588 / OrangePi 侧软件
 │   ├── app/
 │   │   ├── camera_manager.py    # 摄像头管理与自动恢复
+│   │   ├── detectors/           # detector 模块化目录
 │   │   ├── logging_setup.py     # 日志初始化
 │   │   ├── protocol.py          # 串口协议打包
 │   │   ├── serial_ctrl.py       # 串口发送与自动重连
 │   │   ├── settings.py          # YAML 加载与配置校验
-│   │   └── vision.py            # 人脸检测与画面标注
+│   │   └── vision.py            # 视觉兼容包装层
 │   ├── configs/
 │   │   └── default.yaml         # 默认配置文件
 │   ├── logs/                    # 运行日志目录
 │   ├── scripts/
-│   │   └── run_headless.sh      # headless 启动脚本
+│   │   ├── find_devices.sh      # 设备发现脚本
+│   │   ├── install_service.sh   # service 安装脚本
+│   │   ├── run_headless.sh      # headless 启动脚本
+│   │   └── uninstall_service.sh # service 卸载脚本
 │   ├── services/
 │   │   └── gimbal-ai.service    # systemd service 模板
 │   ├── config.py                # 配置兼容层
 │   ├── main.py                  # 程序入口
 │   └── requirements.txt         # Python 依赖
 ├── docs/
+│   ├── communication_protocol.md # 通信协议说明
 │   ├── deployment_orangepi.md   # OrangePi / RK3588 部署与运行说明
 │   └── system_architecture.md   # 系统架构说明
 ├── LICENSE
@@ -137,7 +151,20 @@ python3 -m pip install -r requirements.txt
 
 如使用虚拟环境，请先激活对应环境；在 headless 场景下，也可以直接使用 `scripts/run_headless.sh` 作为统一启动入口。
 
-### 3. 启动方式
+### 3. 设备确认与配置
+
+在修改 `configs/default.yaml` 之前，建议先查看当前系统枚举到的摄像头和串口：
+
+```bash
+bash Software_RK3588/scripts/find_devices.sh
+```
+
+当前建议：
+
+- `camera.index` 仍填写数值索引
+- `serial.port` 优先填写 `/dev/serial/by-id/*`
+
+### 4. 启动方式
 
 #### GUI 模式
 
@@ -165,7 +192,21 @@ python main.py --headless --config configs/default.yaml
 bash Software_RK3588/scripts/run_headless.sh
 ```
 
-### 4. 日志查看
+#### 安装 systemd 服务
+
+适用场景：OrangePi / RK3588 长期后台运行。
+
+```bash
+bash Software_RK3588/scripts/install_service.sh
+```
+
+卸载：
+
+```bash
+bash Software_RK3588/scripts/uninstall_service.sh
+```
+
+### 5. 日志查看
 
 控制台日志会直接输出到终端，同时也会写入文件：
 
@@ -177,21 +218,16 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 
 - [系统架构说明](docs/system_architecture.md)
 - [OrangePi / RK3588 部署与运行说明](docs/deployment_orangepi.md)
-
-如果后续需要通过 systemd 托管运行，可参考：
-
-- `Software_RK3588/services/gimbal-ai.service`
-
-需要注意，`gimbal-ai.service` 当前只是模板文件，不表示仓库已经提供完整的自动安装、自动启用流程。
+- [RK3588 <-> STM32 通信协议说明](docs/communication_protocol.md)
 
 ## 当前限制
 
 - 摄像头当前依赖固定 `camera.index`
-- 串口当前依赖固定 `serial.port`
-- 当前视觉算法仍为 OpenCV Haar Cascade
-- 更复杂的设备发现机制尚未实现
-- 更完整的协议状态机 / 心跳 / safe mode 尚未实现
-- `gimbal-ai.service` 当前仍处于模板化准备阶段
+- 串口配置当前仍依赖固定 `serial.port`，虽然现在已提供设备发现脚本
+- 当前视觉后端默认仍是 OpenCV Haar Cascade，detector 模块化结构已具备，但仓库里还没有第二个 detector 实现
+- `scan` 当前仅保留配置和日志占位，没有真实扫描动作
+- `CMD_SET_MODE` 当前仅是预留协议入口，还没有完整上下位机模式闭环
+- 当前协议仍是单向主链路，没有下位机状态回传、ACK 或重传机制
 
 ## 发展路径
 
@@ -211,21 +247,25 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 - `run_headless.sh`
 - `gimbal-ai.service` 模板准备
 
-### 阶段 2：更强感知与模型部署
+### 阶段 2：v2.0 第一轮状态化与可部署性收口
+
+当前已完成的重点包括：
+
+- detector 模块化第一轮
+- 最小模式状态机与去抖 / 滞回
+- heartbeat / no-target / link-timeout safe hold
+- 最小双端状态闭环
+- service 安装/卸载脚本
+- 设备发现脚本与协议文档
+
+### 阶段 3：更强感知与模式扩展
 
 后续可继续推进：
 
-- 更强的人脸检测或目标检测模型
-- RKNN / NPU 加速路线评估与落地
-- 更稳定的设备发现机制
-
-### 阶段 3：交互与模式扩展
-
-后续可继续推进：
-
-- 更多运行模式与控制模式
-- 更完整的协议状态管理与运行监控
-- 更完善的部署脚本与 systemd 安装流程
+- 第二个 detector 实现与切换验证
+- 更完整的 mode command 闭环
+- `scan` 动作与更明确的 return-home 策略
+- 更细的运行状态监控与协议回传
 
 ### 阶段 4：向更完整的桌面级智能体形态扩展
 

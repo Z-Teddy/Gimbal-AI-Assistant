@@ -29,6 +29,7 @@ class SerialController:
         实例化协议处理对象，并尝试打开串口连接。
         """
         serial_cfg = config.get_settings().get("serial", {})
+        protocol_cfg = config.get_settings().get("protocol", {})
 
         # 1. 实例化协议处理类
         self.protocol = GimbalProtocol()
@@ -37,7 +38,20 @@ class SerialController:
             0.1,
             float(serial_cfg.get("reconnect_interval_sec", 2.0)),
         )
+        self.heartbeat_enabled = bool(protocol_cfg.get("heartbeat_enabled", False))
+        self.heartbeat_interval_sec = max(
+            0.01,
+            float(protocol_cfg.get("heartbeat_interval_sec", 1.0)),
+        )
+        self.no_target_enabled = bool(protocol_cfg.get("no_target_enabled", False))
+        self.no_target_interval_sec = max(
+            0.01,
+            float(protocol_cfg.get("no_target_interval_sec", 0.2)),
+        )
         self.last_send_time = 0
+        self.last_heartbeat_time = 0.0
+        self.last_no_target_time = 0.0
+        self.heartbeat_seq = 0
         self.ser = None
         self.next_reconnect_time = 0.0
 
@@ -108,6 +122,65 @@ class SerialController:
 
         self._connect(initial=False)
 
+    def _send_packet(self, packet: bytes, failure_reason: str):
+        """发送已经封装好的协议包"""
+        if self.ser is None or not self.ser.is_open:
+            return False
+
+        try:
+            self.ser.write(packet)
+            return True
+        except Exception as exc:
+            self.logger.error("串口发送失败: %s", exc)
+            self._disconnect(failure_reason)
+            return False
+
+    def send_heartbeat(self, status_flags: int = 0, force: bool = False):
+        """
+        发送心跳包。
+
+        默认受 protocol.heartbeat_enabled 和 heartbeat_interval_sec 控制，
+        以保持 v1.5 默认行为兼容。
+        """
+        if not self.heartbeat_enabled and not force:
+            return False
+
+        now = time.monotonic()
+        if not force and now - self.last_heartbeat_time < self.heartbeat_interval_sec:
+            return False
+
+        packet = self.protocol.pack_heartbeat(self.heartbeat_seq, status_flags)
+        if not self._send_packet(packet, "心跳发送失败"):
+            return False
+
+        self.last_heartbeat_time = now
+        self.heartbeat_seq = (self.heartbeat_seq + 1) & 0xFF
+        return True
+
+    def send_no_target(
+        self,
+        reason_code: int = GimbalProtocol.NO_TARGET_REASON_LOST,
+        force: bool = False,
+    ):
+        """
+        发送无目标状态包。
+
+        默认关闭，避免改变 v1.5 在目标丢失时保持静默的行为。
+        """
+        if not self.no_target_enabled and not force:
+            return False
+
+        now = time.monotonic()
+        if not force and now - self.last_no_target_time < self.no_target_interval_sec:
+            return False
+
+        packet = self.protocol.pack_no_target(reason_code)
+        if not self._send_packet(packet, "无目标状态发送失败"):
+            return False
+
+        self.last_no_target_time = now
+        return True
+
     def send_coordinates(self, x: int, y: int):
         """
         发送视觉目标坐标 (带频率控制与坐标映射)
@@ -148,13 +221,7 @@ class SerialController:
         packet = self.protocol.pack_face_data(map_x, map_y)
 
         # 5. 物理发送 (UART Transmit)
-        try:
-            self.ser.write(packet)
-            # 调试打印 (建议在生产环境中注释掉)
-            # print(f"[TX] Hex: {packet.hex().upper()}")
-        except Exception as exc:
-            self.logger.error("串口发送失败: %s", exc)
-            self._disconnect("发送失败")
+        self._send_packet(packet, "发送失败")
 
     def close(self):
         """关闭串口资源"""

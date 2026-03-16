@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文用于说明当前项目的系统组成、数据流、控制流以及 `Software_RK3588` 的软件结构，重点描述当前已经落地的工程化能力和设计边界。
+本文用于说明当前项目的系统组成、数据流、控制流以及 `Software_RK3588` 的软件结构，重点描述当前已经落地的 v2.0 第一轮状态化、模块化与部署收口能力。
 
 本文基于当前仓库真实代码与真实目录结构撰写，不把后续规划写成既成事实。
 
@@ -34,22 +34,24 @@
 ### 4.1 RK3588 / OrangePi 负责
 
 - 摄像头采集
-- OpenCV Haar Cascade 人脸检测
+- detector 模块化入口与当前默认 Haar 人脸检测
 - 最大人脸目标筛选
 - 目标中心坐标生成
 - 视觉坐标到 STM32 控制坐标的映射
-- 按当前协议格式打包并通过串口发送目标坐标
-- 运行模式切换
+- 最小模式状态机（`track / hold / return_home`，`scan` 当前仅占位）
+- 主循环去抖 / 滞回
+- 按当前协议格式打包并通过串口发送目标坐标、heartbeat、no-target
 - YAML 配置加载
 - logging
 - 摄像头自动恢复
 - 串口自动重连
-- headless 启动脚本与 systemd 模板准备
+- headless 启动脚本、systemd 模板与安装/卸载脚本
 
 ### 4.2 STM32 负责
 
 - 接收 RK3588 发来的协议帧
 - 解析目标坐标
+- 处理 heartbeat / no-target / link-timeout 的最小状态接线
 - 执行下位机控制逻辑
 - 驱动云台执行端动作
 
@@ -60,13 +62,13 @@
 当前系统的基本链路如下：
 
 1. 摄像头采集图像帧
-2. RK3588 对单帧执行人脸检测
-3. 从检测结果中选择当前主目标
-4. 计算目标中心坐标
+2. RK3588 通过 detector 工厂选择当前视觉后端
+3. 对单帧执行检测，并从结果中选择当前主目标
+4. RK3588 主循环状态机判定当前应处于 `track / hold / return_home`
 5. 将视觉坐标映射到 STM32 使用的控制坐标系
 6. 打包为串口协议帧
 7. 通过串口发送给 STM32
-8. STM32 接收后执行底层控制
+8. STM32 接收后执行底层控制或进入最小 safe hold
 
 ## 6. 当前主链路
 
@@ -87,22 +89,19 @@ read -> detect -> send -> display
 - `display`
   在 GUI 模式下显示处理后的图像
 
-第一轮工程化的重点是：
+当前版本在不推翻主链路顺序的前提下，已经补上：
 
 - 配置化
 - 日志化
 - gui / headless 双模式
 - camera recovery
 - serial reconnect
-- headless 启动脚本
-- systemd service 模板准备
-
-第一轮工程化 **没有** 把重点放在以下方面：
-
-- 修改 UART 协议格式
-- 替换视觉检测算法
-- 重写主流程
-- 重新设计 STM32 控制逻辑
+- detector 模块化第一轮
+- 最小模式状态机
+- 主循环去抖 / 滞回
+- heartbeat / no-target / link-timeout safe hold
+- systemd 安装/卸载脚本
+- 设备发现脚本与协议文档
 
 ## 7. `Software_RK3588` 软件结构说明
 
@@ -114,7 +113,7 @@ read -> detect -> send -> display
 - 加载配置
 - 初始化 logging
 - 创建视觉、串口、摄像头管理对象
-- 维持主循环
+- 维持主循环与最小模式状态机
 - 在 GUI 模式下显示画面
 - 在退出时释放资源
 
@@ -128,16 +127,20 @@ read -> detect -> send -> display
 - 将 YAML 中的配置同步为模块级常量
 - 为仍然依赖旧常量风格的模块提供兼容接口
 
-### 7.3 `app/vision.py`
+### 7.3 `app/detectors/` 与 `app/vision.py`
 
-负责视觉检测与单帧画面处理：
+当前视觉层已经完成 detector 模块化第一轮：
 
-- 执行 OpenCV Haar Cascade 人脸检测
-- 选择最大人脸作为主目标
-- 计算目标中心坐标
-- 在图像上绘制框、中心点和文本
+- `app/detectors/base.py`
+  定义 `BaseDetector` 与统一的 `DetectionResult`
+- `app/detectors/haar_detector.py`
+  当前默认 Haar 检测实现
+- `app/detectors/__init__.py`
+  提供 `create_detector(settings)` 工厂
+- `app/vision.py`
+  保留兼容包装层，避免旧调用方式立即失效
 
-当前没有替换算法，也没有改动人脸框选择逻辑。
+当前仓库里仍只有 `haar_face` 一个实际 detector，实现的检测逻辑与原先基本保持一致。
 
 ### 7.4 `app/serial_ctrl.py`
 
@@ -146,11 +149,11 @@ read -> detect -> send -> display
 - 初始化串口连接
 - 控制发送频率
 - 执行坐标映射
-- 调用 `pack_face_data()` 打包协议帧
+- 调用协议封装发送坐标、heartbeat、no-target
 - 发送失败后断开并进入重连状态
 - 周期性按固定间隔尝试自动重连
 
-当前没有修改协议格式，也没有修改坐标映射公式的核心语义。
+当前没有改变坐标映射公式的核心语义，但已经扩展出最小协议状态化发送入口。
 
 ### 7.5 `app/camera_manager.py`
 
@@ -188,6 +191,9 @@ read -> detect -> send -> display
 
 - camera 参数
 - serial 参数
+- detector 参数
+- protocol 参数
+- control 参数
 - runtime 参数
 - logging 参数
 
@@ -206,21 +212,20 @@ read -> detect -> send -> display
 
 ### 7.10 `services/gimbal-ai.service`
 
-当前的 systemd service 模板，负责为后续托管运行做准备：
+当前的 systemd service 模板与安装脚本，负责为长期托管运行提供最小可用部署入口：
 
-- 使用 `run_headless.sh` 启动
+- service 模板提供可替换占位符
+- `install_service.sh` 负责填充用户、路径和 Python 解释器
 - 以 headless 模式运行
-- 指定 `WorkingDirectory`
 - 开启自动重启
-
-当前它仍是模板文件，不表示已经在系统中正式安装启用。
+- 兼容 journald
 
 ## 8. 当前工程化能力
 
 当前 `Software_RK3588` 已经落地的工程化能力包括：
 
 - 配置化
-  通过 YAML 管理 camera / serial / runtime / logging 参数
+  通过 YAML 管理 camera / serial / detector / protocol / control / runtime / logging 参数
 - 日志化
   同时输出到控制台与文件
 - gui / headless 双模式
@@ -229,29 +234,37 @@ read -> detect -> send -> display
   摄像头读帧失败后自动释放并重连
 - serial reconnect
   串口初始化失败或发送失败后自动尝试重连
-- 部署入口准备
-  提供 `run_headless.sh` 和 `gimbal-ai.service` 模板
+- detector 模块化
+  默认 Haar 后端已抽离到独立目录
+- 最小状态化
+  主循环已具备模式切换、去抖 / 滞回和最小 no-target 策略
+- 双端状态闭环
+  STM32 已接上 heartbeat / no-target / link-timeout safe hold
+- 部署收口
+  提供 `run_headless.sh`、service 安装/卸载脚本和设备发现脚本
 
-这些能力的目标是提升运行稳定性和部署可用性，而不是一次性重做整套架构。上述能力均已在当前分支完成基本运行验证，其中 GUI/headless 启动、camera recovery 和 serial reconnect 已进行实际测试。
+这些能力的目标是提升运行稳定性、部署可用性和后续扩展余量，而不是一次性重做整套架构。
 
 ## 9. 设计边界说明
 
 当前版本明确保持了以下边界：
 
-- 未修改 UART 协议格式
-- 未修改 `app/protocol.py` 的打包逻辑
-- 未替换当前人脸检测算法
-- 未修改最大人脸选择逻辑
+- 协议只做到最小状态化，没有复杂 ACK / 重传 / 双向回传
+- detector 只完成模块化结构，没有引入重依赖或第二个模型
+- 当前默认检测算法仍是 Haar，最大人脸选择逻辑未改变
 - 未改变主流程的基本顺序
-- 当前 systemd 仅完成模板化准备，未在代码层引入专门的 service 框架
+- `scan` 当前仅保留占位，没有真实动作
+- `CMD_SET_MODE` 当前仅预留，不依赖它完成主功能
 
 ## 10. 当前架构优势
 
 从当前代码状态看，这一版架构的优势主要在于：
 
-- 在不推翻原有业务链路的前提下，补上了配置、日志和部署入口
+- 在不推翻原有业务链路的前提下，补上了配置、日志、状态机和部署入口
 - GUI 调试与 headless 运行可以共用一套主程序
 - 摄像头和串口的异常不再直接导致进程退出
+- 默认 detector 行为保持稳定，同时后续扩展第二个 detector 的改动面已经缩小
+- 协议状态化已经把“目标坐标链路”推进到“最小状态链路”
 - 目录规模仍然较小，便于个人项目持续迭代
 - `config.py` 兼容层降低了从硬编码常量迁移到 YAML 配置的改动成本
 
@@ -261,16 +274,18 @@ read -> detect -> send -> display
 
 - 摄像头当前依赖固定 `camera.index`
 - 串口当前依赖固定 `serial.port`
-- 更复杂的设备发现与状态机尚未实现
+- 设备发现当前只做到脚本提示，不做运行时自动绑定
 - 当前视觉算法仍是传统 OpenCV Haar Cascade
-- 当前 systemd 仍是模板化准备，不是完整部署系统
+- 当前仅有一个实际 detector 实现
+- `scan` 与完整 mode command 闭环尚未落地
+- 当前部署脚本是最小 systemd 安装方案，不是复杂运维框架
 
 ### 11.2 后续方向
 
 以下内容属于后续可扩展方向，不代表当前已经完成：
 
+- 第二个 detector 接入与切换验证
+- 更完整的模式命令闭环和状态回传
 - 更稳定的设备发现机制
 - 更完善的状态监控与异常统计
 - 更强的人脸检测或加速推理方案，例如后续再评估 RKNN 路线
-- 更完整的 systemd 安装、启用与维护流程
-- 更细致的测试与验证用例

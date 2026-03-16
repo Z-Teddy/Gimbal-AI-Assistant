@@ -17,9 +17,12 @@
 /* =================================================================================
  * –≠“È÷∏¡Ó≥£¡ø (Command IDs)
  * ================================================================================= */
-#define PROT_CMD_TRACK_FACE     0x02    /*!< ÷∏¡Ó: »À¡≥◊∑◊Ÿ◊¯±Í ˝æ› */
-#define PROT_CMD_SET_ANGLE      0x03    /*!< ÷∏¡Ó: …Ë∂®æ¯∂‘Ω«∂» (”Ô“Ù«øøÿ) */
-#define PROT_CMD_SET_EXPRESSION 0x04    /*!< ÷∏¡Ó: …Ë∂®±Ì«Èœ‘ æ */
+#define PROT_CMD_HEARTBEAT      0x01    /*!< Command: heartbeat */
+#define PROT_CMD_TRACK_FACE     0x02    /*!< ∏∏‰: π˛»À◊∑◊Ÿ ˝æ›∞¸ */
+#define PROT_CMD_SET_ANGLE      0x03    /*!< ∏∏‰: …Ë÷√æ¯∂‘Ω«∂» (”Ô“Ù«øøÿ) */
+#define PROT_CMD_SET_EXPRESSION 0x04    /*!< ∏∏‰: …Ë÷√±Ì«Èœ‘ æ */
+#define PROT_CMD_NO_TARGET      0x05    /*!< Command: no target */
+#define PROT_CMD_SET_MODE       0x06    /*!< Command: set mode (reserved) */
 
 /* =================================================================================
  * œµÕ≥ ˝æ›¿‡–Õ∂®“Â
@@ -55,8 +58,11 @@ typedef struct {
  * ================================================================================= */
 
 /* »´æ÷◊¥Ã¨±‰¡ø */
-extern SystemMode_t g_SystemMode;   /*!< µ±«∞œµÕ≥‘À––ƒ£ Ω */
+extern SystemMode_t g_SystemMode;   /*!< µ±«∞œµÕ≥π§◊˜ƒ£ Ω */
 extern QueueHandle_t xCmdQueue;     /*!< ÷∏¡Óœ˚œ¢∂”¡–æ‰±˙ */
+extern volatile TickType_t g_last_link_tick;      /*!< Last valid link activity tick */
+extern volatile uint8_t g_target_available;       /*!< 1 when target packets are active */
+extern volatile uint8_t g_last_no_target_reason;  /*!< Last no-target reason code */
 
 /**
   * @brief  –≠“È’ª≥ı ºªØ

@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-# Replace USER_NAME with the Linux user that should run this service.
-User=USER_NAME
-# Replace the paths below with the absolute path to your Software_RK3588 directory.
-WorkingDirectory=/abs/path/to/Gimbal-AI-Assistant-private/Software_RK3588
-ExecStart=/abs/path/to/Gimbal-AI-Assistant-private/Software_RK3588/scripts/run_headless.sh
+# install_service.sh will replace the placeholders below.
+User={{RUN_USER}}
+WorkingDirectory={{SOFTWARE_DIR}}
+Environment=GIMBAL_AI_PROJECT_ROOT={{PROJECT_ROOT}}
+ExecStart={{PYTHON_BIN}} {{SOFTWARE_DIR}}/main.py --headless --config {{SOFTWARE_DIR}}/configs/default.yaml
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
