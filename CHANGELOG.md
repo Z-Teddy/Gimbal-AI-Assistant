@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.5 - RetinaFace detector 接入
+
+### 新增
+- 新增 `retinaface` detector，支持与 `haar_face` 通过 `detector.type` 切换
+- 接入基于 RK3588 NPU / RKNNLite 的 `RetinaFace_mobile320.rknn`
+- 新增 RetinaFace 后处理模块与单图 smoke test 脚本
+
+### 改进
+- 感知层从单一 Haar detector 扩展为双 detector 配置
+- 保持现有 GUI / headless 主程序入口兼容
+- 保持状态机与串口主链路兼容
+
+### 验证
+- 单图 smoke test 通过
+- 主程序 GUI / headless 联调通过
+- `track / hold` 基本状态切换正常
+
 ## v2.0 - 最小状态化异构系统原型与第一轮收口
 
 ### 新增

@@ -8,6 +8,10 @@ def create_detector(settings) -> BaseDetector:
 
     if detector_type == "haar_face":
         return HaarFaceDetector()
+    if detector_type == "retinaface":
+        from app.detectors.rknn_retinaface import RetinaFaceRKNNDetector
+
+        return RetinaFaceRKNNDetector(settings)
 
     raise ValueError(f"不支持的 detector.type: {detector_type}")
 

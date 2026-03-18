@@ -18,7 +18,7 @@
 
 项目采用“RK3588 负责感知与上层运行管理，STM32 负责底层控制与执行”的分工方式：
 
-- RK3588 / OrangePi 负责摄像头采集、OpenCV Haar Cascade 人脸检测、目标中心坐标生成、坐标映射、串口发送，以及 Linux 侧的配置管理、日志、运行模式和异常恢复。
+- RK3588 / OrangePi 负责摄像头采集、目标检测、主目标中心坐标生成、坐标映射、串口发送，以及 Linux 侧的配置管理、日志、运行模式和异常恢复。当前已支持 `haar_face` 与 `retinaface` 两种 detector 后端，其中 `retinaface` 基于 RK3588 NPU / RKNNLite 部署。
 - STM32 负责接收 RK3588 发来的目标坐标，并执行下位机控制与云台驱动相关逻辑。当前仓库中已包含 FreeRTOS / PID / PWM / Servo / 协议相关代码基础。
 
 当前之所以先从视觉云台切入，是因为它同时覆盖了摄像头输入、视觉检测、串口通信、下位机控制、舵机执行与 Linux 侧部署，是整个项目走向更完整桌面助手形态的第一块工程基石。
@@ -29,14 +29,24 @@
 read -> detect -> send -> display
 ```
 
-当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v2.0 第一轮：具备最小状态、模式、保护和 detector 模块化能力的异构嵌入式系统原型**。
+当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v2.5：在 v2.0 第一轮状态化与 detector 模块化基础上，补齐 RetinaFace / RKNNLite 第二个 detector 并完成主程序联调收口**。
+
+## v2.5 新增能力
+
+在 v2.0 第一轮基础上，当前仓库已完成一轮面向 `retinaface` 的增量收口：
+
+- 新增第二个 detector：`retinaface`，可与 `haar_face` 按 `detector.type` 切换
+- `retinaface` 基于 RK3588 NPU / RKNNLite 部署
+- 已完成官方 RetinaFace `.onnx -> .rknn` 模型转换链，当前板端加载 `.rknn` 推理
+- 已完成单图 smoke test，以及 GUI / headless 两种主程序模式联调
+- `track / hold` 状态机与现有串口链路在 RetinaFace 路径下保持兼容
 
 ## 当前已实现能力 / 项目亮点
 
 ### 系统功能
 
-- 基于 OpenCV Haar Cascade 的人脸检测
-- detector 模块化第一轮完成，默认 `detector.type = "haar_face"`
+- 支持 `haar_face` / `retinaface` 双 detector 人脸检测，其中 `retinaface` 基于 RK3588 NPU / RKNNLite
+- detector 模块化第一轮完成，已落地两个真实实现，可通过 `detector.type` 切换
 - 目标中心坐标生成与视觉坐标到控制坐标的映射
 - RK3588 + STM32 异构协同：上位机负责视觉与运行管理，下位机负责底层控制执行
 - 最小模式状态机：`track / hold / return_home`（`scan` 当前仅保留占位）
@@ -64,7 +74,10 @@ read -> detect -> send -> display
 - camera recovery 已做热插拔验证
 - serial reconnect 已做断开恢复验证
 - `scripts/run_headless.sh` 已手动验证可正常启动
-- detector 模块化第一轮已做回归，默认 `haar_face` 下行为保持稳定
+- detector 模块化第一轮已做回归，`haar_face` 路径行为保持稳定
+- RetinaFace RKNNLite 板端单图 smoke test 已通过，可验证模型加载、推理输出、后处理与 `target_center`
+- RetinaFace 已完成 GUI / headless 主程序联调，可正常检测与跟踪人脸
+- RetinaFace 路径下 `track / hold` 状态机与现有串口链路保持正常
 - 主循环去抖 / 滞回优化已做实测，`track <-> hold` 高频抖动明显降低
 - heartbeat / no-target / link-timeout safe hold 的最小双端状态闭环已验证通过
 - 串口中途断开后，serial reconnect 与 camera recovery 链路保持可用
@@ -85,7 +98,7 @@ read -> detect -> send -> display
 当前系统的基本数据流如下：
 
 1. 摄像头采集图像帧
-2. RK3588 执行人脸检测
+2. RK3588 执行 detector 推理（当前支持 `haar_face` / `retinaface`）
 3. 计算主目标中心坐标
 4. 坐标映射到 STM32 控制坐标系
 5. 通过串口发送到 STM32
@@ -99,15 +112,37 @@ read -> detect -> send -> display
 
 ```text
 Gimbal-AI-Assistant/
-├── Hardware_STM32/              # STM32 下位机固件工程
-│   ├── FreeRTOS/
-│   ├── Libraries/
+├── Hardware_STM32/              # STM32 下位机固件工程（Keil + FreeRTOS）
+│   ├── FreeRTOS/                # FreeRTOS 内核源码与移植层（工程使用 Cortex-M3）
+│   │   ├── include/
+│   │   ├── port/
+│   │   └── src/
+│   ├── Libraries/               # STM32F10x CMSIS / 标准外设库
+│   │   ├── CMSIS/
+│   │   └── FWlib/
 │   ├── Project/
-│   └── User/
+│   │   └── RVMDK（uv5）/        # Keil uVision5 工程入口（STM32F103VE）
+│   └── User/                    # 下位机应用层与板级驱动
+│       ├── APP/                 # 协议解析、PID 控制、PWM/Servo、OLED 等核心模块
+│       │   ├── protocol.c       # 串口协议解析、状态机、命令分发、link alive / no-target 处理
+│       │   ├── PID.c            # 云台 PID 控制
+│       │   ├── PWM.c            # PWM 输出
+│       │   ├── Servo.c          # 舵机控制
+│       │   └── OLED.c           # OLED 显示
+│       ├── uart/                # 串口 BSP 与上位机通信接收
+│       ├── led/                 # LED 板级驱动
+│       ├── key/                 # 按键板级驱动
+│       ├── FreeRTOSConfig.h     # RTOS 配置
+│       ├── freertos_hooks.c     # 栈溢出 / 内存失败钩子
+│       └── main.c               # 控制任务、GUI 任务与系统入口
 ├── Software_RK3588/             # RK3588 / OrangePi 侧软件
 │   ├── app/
 │   │   ├── camera_manager.py    # 摄像头管理与自动恢复
 │   │   ├── detectors/           # detector 模块化目录
+│   │   │   ├── base.py
+│   │   │   ├── haar_detector.py
+│   │   │   ├── retinaface_postprocess.py
+│   │   │   └── rknn_retinaface.py
 │   │   ├── logging_setup.py     # 日志初始化
 │   │   ├── protocol.py          # 串口协议打包
 │   │   ├── serial_ctrl.py       # 串口发送与自动重连
@@ -116,10 +151,13 @@ Gimbal-AI-Assistant/
 │   ├── configs/
 │   │   └── default.yaml         # 默认配置文件
 │   ├── logs/                    # 运行日志目录
+│   ├── models/
+│   │   └── retinaface/          # RetinaFace RKNN 模型目录
 │   ├── scripts/
 │   │   ├── find_devices.sh      # 设备发现脚本
 │   │   ├── install_service.sh   # service 安装脚本
 │   │   ├── run_headless.sh      # headless 启动脚本
+│   │   ├── test_retinaface_rknn.py # RetinaFace 单图 smoke test
 │   │   └── uninstall_service.sh # service 卸载脚本
 │   ├── services/
 │   │   └── gimbal-ai.service    # systemd service 模板
@@ -163,6 +201,30 @@ bash Software_RK3588/scripts/find_devices.sh
 
 - `camera.index` 仍填写数值索引
 - `serial.port` 优先填写 `/dev/serial/by-id/*`
+- 当前支持 `detector.type = "haar_face"` 与 `detector.type = "retinaface"`；未准备 `.rknn` 模型文件时可先使用 `haar_face`
+
+### RetinaFace 模型说明
+
+- 当前使用模型：`RetinaFace_mobile320.rknn`
+- 建议放置路径：`Software_RK3588/models/retinaface/RetinaFace_mobile320.rknn`
+- 板端只负责加载 `.rknn` 推理，`.onnx -> .rknn` 转换在板外完成
+- 模型来源：官方 `rknn_model_zoo` 的 RetinaFace 示例，原始 ONNX 模型为 `RetinaFace_mobile320.onnx`
+- 参考获取与转换方式：
+  - 下载 ONNX：`examples/RetinaFace/model/download_model.sh`
+  - 转换命令：`python convert.py ../model/RetinaFace_mobile320.onnx rk3588`
+- 官方 RetinaFace 示例与转换说明见：
+  - `https://github.com/airockchip/rknn_model_zoo/tree/main/examples/RetinaFace`
+
+### RetinaFace 单图 smoke test
+
+`Software_RK3588/scripts/test_retinaface_rknn.py` 用于单图 smoke test，可快速验证模型加载、推理输出、后处理以及 `target_center` 是否正常。
+
+最小命令示例：
+
+```bash
+cd Software_RK3588
+python scripts/test_retinaface_rknn.py --image /path/to/test.jpg
+```
 
 ### 4. 启动方式
 
@@ -224,7 +286,8 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 
 - 摄像头当前依赖固定 `camera.index`
 - 串口配置当前仍依赖固定 `serial.port`，虽然现在已提供设备发现脚本
-- 当前视觉后端默认仍是 OpenCV Haar Cascade，detector 模块化结构已具备，但仓库里还没有第二个 detector 实现
+- 当前已支持 `haar_face` 与 `retinaface` 两种 detector；其中 `retinaface` 第一版固定为 `input_size = 320`
+- RetinaFace 的 landmark 当前仅作为检测附带输出 / 可选绘制，不进入控制链
 - `scan` 当前仅保留配置和日志占位，没有真实扫描动作
 - `CMD_SET_MODE` 当前仅是预留协议入口，还没有完整上下位机模式闭环
 - 当前协议仍是单向主链路，没有下位机状态回传、ACK 或重传机制
@@ -238,7 +301,7 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 当前已完成的重点包括：
 
 - RK3588 + STM32 异构主链路打通
-- OpenCV Haar Cascade 人脸检测
+- 双 detector 人脸检测：OpenCV Haar Cascade / RetinaFace RKNNLite
 - GUI / headless 双模式
 - YAML 配置加载
 - logging
@@ -262,10 +325,10 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 
 后续可继续推进：
 
-- 第二个 detector 实现与切换验证
 - 更完整的 mode command 闭环
 - `scan` 动作与更明确的 return-home 策略
-- 更细的运行状态监控与协议回传
+- 更细的状态回传 / ACK / 协议增强
+- RetinaFace 后端进一步稳定性与部署收口
 
 ### 阶段 4：向更完整的桌面级智能体形态扩展
 

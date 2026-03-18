@@ -41,3 +41,7 @@ Thumbs.db
 
 # --- Private docs ---
 docs_private/
+
+# external reference code (read-only, not part of main project)
+external_refs/*
+!external_refs/README.md

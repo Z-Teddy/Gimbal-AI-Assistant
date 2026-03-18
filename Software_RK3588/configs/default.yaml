@@ -16,6 +16,15 @@ serial:
 
 detector:
   type: "haar_face"
+  haar_face: {}
+  retinaface:
+    model_path: "models/retinaface/RetinaFace_mobile320.rknn"
+    input_size: 320
+    candidate_threshold: 0.02
+    score_threshold: 0.4
+    nms_threshold: 0.4
+    draw_landmarks: false
+    bg_color: 114
 
 protocol:
   heartbeat_enabled: false
