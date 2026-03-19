@@ -29,17 +29,22 @@
 read -> detect -> send -> display
 ```
 
-当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v2.5：在 v2.0 第一轮状态化与 detector 模块化基础上，补齐 RetinaFace / RKNNLite 第二个 detector 并完成主程序联调收口**。
+当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v3.0：在 v2.5 的 RetinaFace / RKNNLite detector 基础上，补齐模式闭环与主动搜索链路**。
 
-## v2.5 新增能力
+## v3.0 新增能力
 
-在 v2.0 第一轮基础上，当前仓库已完成一轮面向 `retinaface` 的增量收口：
+在 v2.5 第一轮感知收口基础上，当前仓库补齐了面向演示与联调的模式闭环能力：
 
-- 新增第二个 detector：`retinaface`，可与 `haar_face` 按 `detector.type` 切换
-- `retinaface` 基于 RK3588 NPU / RKNNLite 部署
-- 已完成官方 RetinaFace `.onnx -> .rknn` 模型转换链，当前板端加载 `.rknn` 推理
-- 已完成单图 smoke test，以及 GUI / headless 两种主程序模式联调
-- `track / hold` 状态机与现有串口链路在 RetinaFace 路径下保持兼容
+- `scan` 从日志占位升级为真实左右往返扫描动作
+- startup 无目标时保持稳定待机，不直接切入 lost 搜索链
+- 主动 `scan` 默认只在至少成功见过一次目标后，作为目标丢失后的搜索动作触发
+- RK3588 -> STM32 的 `CMD_SET_MODE` 形成最小闭环
+- 系统可跑通：
+  `target lost -> hold -> scan -> target reacquired -> track`
+- 系统可跑通：
+  `target lost -> hold -> scan timeout -> return_home -> hold`
+- STM32 OLED 增加 `TRK / HOLD / SCAN / HOME / VOICE / SAFE` 最小状态显示
+- 提供 `configs/v3_0.yaml` 作为 v3.0 联调与演示配置
 
 ## 当前已实现能力 / 项目亮点
 
@@ -49,9 +54,10 @@ read -> detect -> send -> display
 - detector 模块化第一轮完成，已落地两个真实实现，可通过 `detector.type` 切换
 - 目标中心坐标生成与视觉坐标到控制坐标的映射
 - RK3588 + STM32 异构协同：上位机负责视觉与运行管理，下位机负责底层控制执行
-- 最小模式状态机：`track / hold / return_home`（`scan` 当前仅保留占位）
+- 最小模式状态机：`track / hold / scan / return_home`
 - 主循环去抖 / 滞回优化，降低瞬时漏检导致的 `track <-> hold` 抖动
-- 串口链路完成目标坐标、heartbeat、no-target 的最小状态化发送，并与 STM32 下位机控制逻辑打通
+- RK3588 侧实现 scan 轨迹生成；STM32 在 `return_home` 模式下执行物理回中
+- 串口链路完成目标坐标、heartbeat、no-target、mode command 的最小状态化发送，并与 STM32 下位机控制逻辑打通
 - 已形成从视觉输入、目标中心点生成、串口下发到底层执行的最小功能闭环
 
 ### RK3588 Linux 侧工程化
@@ -77,9 +83,9 @@ read -> detect -> send -> display
 - detector 模块化第一轮已做回归，`haar_face` 路径行为保持稳定
 - RetinaFace RKNNLite 板端单图 smoke test 已通过，可验证模型加载、推理输出、后处理与 `target_center`
 - RetinaFace 已完成 GUI / headless 主程序联调，可正常检测与跟踪人脸
-- RetinaFace 路径下 `track / hold` 状态机与现有串口链路保持正常
+- RetinaFace 路径下 `track / hold / scan / return_home` 状态机代码路径与现有串口链路保持兼容
 - 主循环去抖 / 滞回优化已做实测，`track <-> hold` 高频抖动明显降低
-- heartbeat / no-target / link-timeout safe hold 的最小双端状态闭环已验证通过
+- heartbeat / no-target / mode command / link-timeout safe hold 的最小双端状态闭环已打通
 - 串口中途断开后，serial reconnect 与 camera recovery 链路保持可用
 
 ## 系统硬件组成
@@ -101,8 +107,9 @@ read -> detect -> send -> display
 2. RK3588 执行 detector 推理（当前支持 `haar_face` / `retinaface`）
 3. 计算主目标中心坐标
 4. 坐标映射到 STM32 控制坐标系
-5. 通过串口发送到 STM32
-6. STM32 接收后执行底层控制并驱动云台
+5. RK3588 在 `scan` 状态下生成扫描目标点；`return_home` 由 STM32 按 mode 执行物理回中
+6. 通过串口发送到 STM32
+7. STM32 接收后按当前 mode 执行底层控制并驱动云台
 
 更完整的说明见：
 
@@ -149,7 +156,8 @@ Gimbal-AI-Assistant/
 │   │   ├── settings.py          # YAML 加载与配置校验
 │   │   └── vision.py            # 视觉兼容包装层
 │   ├── configs/
-│   │   └── default.yaml         # 默认配置文件
+│   │   ├── default.yaml         # 默认兼容配置
+│   │   └── v3_0.yaml            # v3.0 联调 / 演示配置
 │   ├── logs/                    # 运行日志目录
 │   ├── models/
 │   │   └── retinaface/          # RetinaFace RKNN 模型目录
@@ -203,6 +211,9 @@ bash Software_RK3588/scripts/find_devices.sh
 - `serial.port` 优先填写 `/dev/serial/by-id/*`
 - 当前支持 `detector.type = "haar_face"` 与 `detector.type = "retinaface"`；未准备 `.rknn` 模型文件时可先使用 `haar_face`
 
+如果要直接体验 v3.0 的模式闭环，建议基于 `configs/v3_0.yaml` 联调，而不是直接改动 `default.yaml`。
+当前 `configs/v3_0.yaml` 通过 `extends: default.yaml` 叠加 v3.0 行为开关，会沿用 `default.yaml` 中已有的 `camera` / `serial` / `detector` 配置。
+
 ### RetinaFace 模型说明
 
 - 当前使用模型：`RetinaFace_mobile320.rknn`
@@ -237,6 +248,13 @@ cd Software_RK3588
 python main.py --gui --config configs/default.yaml
 ```
 
+v3.0 联调推荐命令：
+
+```bash
+cd Software_RK3588
+python main.py --gui --config configs/v3_0.yaml
+```
+
 #### headless 模式
 
 适用场景：无显示器、后台运行或为后续 systemd 托管做验证。
@@ -244,6 +262,13 @@ python main.py --gui --config configs/default.yaml
 ```bash
 cd Software_RK3588
 python main.py --headless --config configs/default.yaml
+```
+
+v3.0 最小联调命令：
+
+```bash
+cd Software_RK3588
+python main.py --headless --config configs/v3_0.yaml
 ```
 
 #### `run_headless.sh` 脚本
@@ -288,9 +313,8 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 - 串口配置当前仍依赖固定 `serial.port`，虽然现在已提供设备发现脚本
 - 当前已支持 `haar_face` 与 `retinaface` 两种 detector；其中 `retinaface` 第一版固定为 `input_size = 320`
 - RetinaFace 的 landmark 当前仅作为检测附带输出 / 可选绘制，不进入控制链
-- `scan` 当前仅保留配置和日志占位，没有真实扫描动作
-- `CMD_SET_MODE` 当前仅是预留协议入口，还没有完整上下位机模式闭环
 - 当前协议仍是单向主链路，没有下位机状态回传、ACK 或重传机制
+- STM32 侧 `scan` 轨迹依然由 RK3588 生成，并未引入独立扫描控制器
 
 ## 发展路径
 
@@ -321,16 +345,23 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 - service 安装/卸载脚本
 - 设备发现脚本与协议文档
 
-### 阶段 3：更强感知与模式扩展
+### 阶段 3：模式闭环与主动搜索
+
+当前已完成的重点包括：
+
+- 最小 mode command 闭环
+- `scan` 主动搜索动作
+- `return_home` 闭环补齐
+- STM32 最小 mode 消费与 OLED 状态显示
+
+### 阶段 4：更强感知与协议扩展
 
 后续可继续推进：
 
-- 更完整的 mode command 闭环
-- `scan` 动作与更明确的 return-home 策略
 - 更细的状态回传 / ACK / 协议增强
 - RetinaFace 后端进一步稳定性与部署收口
 
-### 阶段 4：向更完整的桌面级智能体形态扩展
+### 阶段 5：向更完整的桌面级智能体形态扩展
 
 更长期的方向包括：
 

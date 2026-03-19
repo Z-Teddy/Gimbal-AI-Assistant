@@ -14,6 +14,9 @@ from typing import Any, Dict
 import yaml
 
 
+CONFIG_EXTENDS_KEY = "extends"
+
+
 DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
     "camera": {
         "index": 0,
@@ -40,6 +43,7 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
         "no_target_enabled": False,
         "no_target_interval_sec": 0.2,
         "mode_command_enabled": False,
+        "mode_command_interval_sec": 0.5,
     },
     "control": {
         "default_mode": "track",
@@ -52,6 +56,11 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
         "home_y": 240,
         "scan_enabled": False,
         "scan_interval_sec": 1.0,
+        "hold_before_scan_sec": 0.6,
+        "scan_timeout_sec": 6.0,
+        "return_home_hold_sec": 1.0,
+        "scan_period_sec": 2.4,
+        "scan_offset_px": 120,
     },
     "runtime": {
         "mode": "gui",
@@ -159,6 +168,7 @@ def _validate_settings(settings: Dict[str, Any]) -> None:
     _require_bool(protocol, "no_target_enabled")
     _require_positive_number(protocol, "no_target_interval_sec")
     _require_bool(protocol, "mode_command_enabled")
+    _require_positive_number(protocol, "mode_command_interval_sec")
 
     if control.get("default_mode") not in {"track", "hold", "return_home", "scan"}:
         raise ValueError(
@@ -176,6 +186,11 @@ def _validate_settings(settings: Dict[str, Any]) -> None:
     _require_int(control, "home_y", minimum=0)
     _require_bool(control, "scan_enabled")
     _require_positive_number(control, "scan_interval_sec")
+    _require_number(control, "hold_before_scan_sec", minimum=0.0)
+    _require_positive_number(control, "scan_timeout_sec")
+    _require_positive_number(control, "return_home_hold_sec")
+    _require_positive_number(control, "scan_period_sec")
+    _require_int(control, "scan_offset_px", minimum=0)
 
     if runtime.get("mode") not in {"gui", "headless"}:
         raise ValueError("配置项 'runtime.mode' 仅支持 'gui' 或 'headless'")
@@ -191,8 +206,7 @@ def _validate_settings(settings: Dict[str, Any]) -> None:
     _require_str(logging_cfg, "date_format")
 
 
-def load_settings(config_path: Path) -> Dict[str, Any]:
-    config_path = Path(config_path)
+def _load_yaml_object(config_path: Path) -> Dict[str, Any]:
     if not config_path.exists():
         raise FileNotFoundError(f"配置文件不存在: {config_path}")
 
@@ -201,7 +215,39 @@ def load_settings(config_path: Path) -> Dict[str, Any]:
 
     if not isinstance(loaded, dict):
         raise ValueError("YAML 根节点必须是对象")
+    return loaded
 
+
+def _resolve_extends_path(config_path: Path, extends_value: str) -> Path:
+    path = Path(extends_value)
+    if path.is_absolute():
+        return path
+    return (config_path.parent / path).resolve()
+
+
+def _load_settings_overrides(config_path: Path, visited=None) -> Dict[str, Any]:
+    config_path = Path(config_path).resolve()
+    if visited is None:
+        visited = set()
+    if config_path in visited:
+        cycle = " -> ".join(str(path) for path in [*visited, config_path])
+        raise ValueError(f"检测到循环配置继承: {cycle}")
+
+    loaded = _load_yaml_object(config_path)
+    extends_value = loaded.pop(CONFIG_EXTENDS_KEY, None)
+    if extends_value is None:
+        return loaded
+    if not isinstance(extends_value, str) or not extends_value.strip():
+        raise ValueError(f"配置项 '{CONFIG_EXTENDS_KEY}' 必须是非空字符串")
+
+    base_path = _resolve_extends_path(config_path, extends_value)
+    base_settings = _load_settings_overrides(base_path, visited | {config_path})
+    return _deep_merge(base_settings, loaded)
+
+
+def load_settings(config_path: Path) -> Dict[str, Any]:
+    config_path = Path(config_path)
+    loaded = _load_settings_overrides(config_path)
     settings = _deep_merge(DEFAULT_SETTINGS, loaded)
     _validate_settings(settings)
     settings["_meta"] = {

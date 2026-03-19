@@ -174,3 +174,59 @@ void PID_Sync_Current_PWM(int pwm_x, int pwm_y)
     Current_PWM_Y = (float)pwm_y;
 }
 
+/**
+  * @brief  平滑驱动双轴 PWM 回到物理中位
+  * @note   使用与 PID 相同的爬坡限制，避免回中动作突跳
+  */
+void PID_Move_Towards_Center(void)
+{
+    float delta_x = SERVO_PWM_CENTER - Current_PWM_X;
+    float delta_y = SERVO_PWM_CENTER - Current_PWM_Y;
+
+    if (delta_x > PID_MAX_STEP)
+    {
+        delta_x = PID_MAX_STEP;
+    }
+    else if (delta_x < -PID_MAX_STEP)
+    {
+        delta_x = -PID_MAX_STEP;
+    }
+
+    if (delta_y > PID_MAX_STEP)
+    {
+        delta_y = PID_MAX_STEP;
+    }
+    else if (delta_y < -PID_MAX_STEP)
+    {
+        delta_y = -PID_MAX_STEP;
+    }
+
+    if (delta_x > -1.0f && delta_x < 1.0f)
+    {
+        Current_PWM_X = SERVO_PWM_CENTER;
+    }
+    else
+    {
+        Current_PWM_X += delta_x;
+    }
+
+    if (delta_y > -1.0f && delta_y < 1.0f)
+    {
+        Current_PWM_Y = SERVO_PWM_CENTER;
+    }
+    else
+    {
+        Current_PWM_Y += delta_y;
+    }
+
+    if (Current_PWM_X > SERVO_PWM_MAX) Current_PWM_X = SERVO_PWM_MAX;
+    if (Current_PWM_X < SERVO_PWM_MIN) Current_PWM_X = SERVO_PWM_MIN;
+    if (Current_PWM_Y > SERVO_PWM_MAX) Current_PWM_Y = SERVO_PWM_MAX;
+    if (Current_PWM_Y < SERVO_PWM_MIN) Current_PWM_Y = SERVO_PWM_MIN;
+
+    last_Err_S_X = 0.0f;
+    last_Err_S_Y = 0.0f;
+
+    PWM_SetCompare3((uint16_t)Current_PWM_X);
+    PWM_SetCompare4((uint16_t)Current_PWM_Y);
+}

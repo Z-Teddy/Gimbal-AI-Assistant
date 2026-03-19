@@ -15,7 +15,7 @@ serial:
   reconnect_interval_sec: 2.0
 
 detector:
-  type: "haar_face"
+  type: "retinaface"
   haar_face: {}
   retinaface:
     model_path: "models/retinaface/RetinaFace_mobile320.rknn"
@@ -32,6 +32,7 @@ protocol:
   no_target_enabled: false
   no_target_interval_sec: 0.2
   mode_command_enabled: false
+  mode_command_interval_sec: 0.5
 
 control:
   default_mode: "track"
@@ -44,6 +45,11 @@ control:
   home_y: 240
   scan_enabled: false
   scan_interval_sec: 1.0
+  hold_before_scan_sec: 0.6
+  scan_timeout_sec: 6.0
+  return_home_hold_sec: 1.0
+  scan_period_sec: 2.4
+  scan_offset_px: 120
 
 runtime:
   mode: "gui"

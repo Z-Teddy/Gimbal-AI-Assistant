@@ -48,10 +48,17 @@ class SerialController:
             0.01,
             float(protocol_cfg.get("no_target_interval_sec", 0.2)),
         )
+        self.mode_command_enabled = bool(protocol_cfg.get("mode_command_enabled", False))
+        self.mode_command_interval_sec = max(
+            0.05,
+            float(protocol_cfg.get("mode_command_interval_sec", 0.5)),
+        )
         self.last_send_time = 0
         self.last_heartbeat_time = 0.0
         self.last_no_target_time = 0.0
+        self.last_mode_time = 0.0
         self.heartbeat_seq = 0
+        self.last_mode_value = None
         self.ser = None
         self.next_reconnect_time = 0.0
 
@@ -75,6 +82,8 @@ class SerialController:
             # 根据配置文件初始化串口 (timeout=0.1 防止阻塞)
             self.ser = serial.Serial(config.SERIAL_PORT, config.BAUD_RATE, timeout=0.1)
             self.next_reconnect_time = 0.0
+            self.last_mode_time = 0.0
+            self.last_mode_value = None
             if initial:
                 self.logger.info("串口首次连接成功: %s", config.SERIAL_PORT)
             else:
@@ -110,6 +119,8 @@ class SerialController:
                 self.ser = None
 
         self.next_reconnect_time = time.monotonic() + self.reconnect_interval_sec
+        self.last_mode_time = 0.0
+        self.last_mode_value = None
 
     def try_reconnect(self):
         """未连接时按固定时间间隔尝试重连"""
@@ -166,8 +177,9 @@ class SerialController:
         发送无目标状态包。
 
         默认关闭，避免改变 v1.5 在目标丢失时保持静默的行为。
+        force 仅用于跳过节流，不绕过总开关。
         """
-        if not self.no_target_enabled and not force:
+        if not self.no_target_enabled:
             return False
 
         now = time.monotonic()
@@ -179,6 +191,32 @@ class SerialController:
             return False
 
         self.last_no_target_time = now
+        return True
+
+    def send_mode(self, mode, force: bool = False):
+        """
+        发送模式命令。
+
+        默认按当前模式周期重发，既用于模式切换通知，也用于串口重连后的
+        最小状态同步。force 仅用于跳过节流，不绕过总开关。
+        """
+        if not self.mode_command_enabled:
+            return False
+
+        now = time.monotonic()
+        if (
+            not force
+            and self.last_mode_value == mode
+            and now - self.last_mode_time < self.mode_command_interval_sec
+        ):
+            return False
+
+        packet = self.protocol.pack_mode(mode)
+        if not self._send_packet(packet, "模式命令发送失败"):
+            return False
+
+        self.last_mode_time = now
+        self.last_mode_value = mode
         return True
 
     def send_coordinates(self, x: int, y: int):

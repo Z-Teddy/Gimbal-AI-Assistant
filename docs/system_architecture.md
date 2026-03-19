@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文用于说明当前项目的系统组成、数据流、控制流以及 `Software_RK3588` 的软件结构，重点描述当前已经落地的 v2.0 第一轮状态化、模块化与部署收口能力。
+本文用于说明当前项目的系统组成、数据流、控制流以及 `Software_RK3588` 的软件结构，重点描述当前已经落地的 v3.0 模式闭环、主动搜索与双端协同能力。
 
 本文基于当前仓库真实代码与真实目录结构撰写，不把后续规划写成既成事实。
 
@@ -38,9 +38,10 @@
 - 最大人脸目标筛选
 - 目标中心坐标生成
 - 视觉坐标到 STM32 控制坐标的映射
-- 最小模式状态机（`track / hold / return_home`，`scan` 当前仅占位）
+- 最小模式状态机（`track / hold / scan / return_home`）
 - 主循环去抖 / 滞回
-- 按当前协议格式打包并通过串口发送目标坐标、heartbeat、no-target
+- scan 轨迹生成与 return_home 模式驱动
+- 按当前协议格式打包并通过串口发送目标坐标、heartbeat、no-target、mode command
 - YAML 配置加载
 - logging
 - 摄像头自动恢复
@@ -51,7 +52,7 @@
 
 - 接收 RK3588 发来的协议帧
 - 解析目标坐标
-- 处理 heartbeat / no-target / link-timeout 的最小状态接线
+- 处理 heartbeat / no-target / mode command / link-timeout 的最小状态接线
 - 执行下位机控制逻辑
 - 驱动云台执行端动作
 
@@ -64,11 +65,12 @@
 1. 摄像头采集图像帧
 2. RK3588 通过 detector 工厂选择当前视觉后端
 3. 对单帧执行检测，并从结果中选择当前主目标
-4. RK3588 主循环状态机判定当前应处于 `track / hold / return_home`
+4. RK3588 主循环状态机判定当前应处于 `track / hold / scan / return_home`
 5. 将视觉坐标映射到 STM32 使用的控制坐标系
-6. 打包为串口协议帧
-7. 通过串口发送给 STM32
-8. STM32 接收后执行底层控制或进入最小 safe hold
+6. 在 `scan` 状态下由 RK3588 生成扫描目标点；在 `return_home` 状态下由 STM32 执行本地物理回中
+7. 打包为串口协议帧
+8. 通过串口发送给 STM32
+9. STM32 接收后根据当前 mode 消费坐标，或进入最小 safe hold
 
 ## 6. 当前主链路
 
@@ -100,6 +102,7 @@ read -> detect -> send -> display
 - 最小模式状态机
 - 主循环去抖 / 滞回
 - heartbeat / no-target / link-timeout safe hold
+- mode command 最小闭环
 - systemd 安装/卸载脚本
 - 设备发现脚本与协议文档
 
@@ -114,6 +117,7 @@ read -> detect -> send -> display
 - 初始化 logging
 - 创建视觉、串口、摄像头管理对象
 - 维持主循环与最小模式状态机
+- 在 `scan` 状态下生成并发送扫描坐标
 - 在 GUI 模式下显示画面
 - 在退出时释放资源
 
@@ -149,11 +153,11 @@ read -> detect -> send -> display
 - 初始化串口连接
 - 控制发送频率
 - 执行坐标映射
-- 调用协议封装发送坐标、heartbeat、no-target
+- 调用协议封装发送坐标、heartbeat、no-target、mode command
 - 发送失败后断开并进入重连状态
 - 周期性按固定间隔尝试自动重连
 
-当前没有改变坐标映射公式的核心语义，但已经扩展出最小协议状态化发送入口。
+当前没有改变坐标映射公式的核心语义，但已经扩展出最小协议状态化与 mode 同步发送入口。
 
 ### 7.5 `app/camera_manager.py`
 
@@ -199,6 +203,15 @@ read -> detect -> send -> display
 
 它是当前运行参数的主要入口。
 
+### 7.8.1 `configs/v3_0.yaml`
+
+额外提供了 v3.0 联调配置文件，用于：
+
+- 通过 `extends: default.yaml` 继承当前默认硬件与 detector 配置
+- 打开 `heartbeat / no-target / mode command`
+- 启用 `scan`
+- 提供 `hold_before_scan_sec`、`scan_timeout_sec`、`return_home_hold_sec`、`scan_period_sec`、`scan_offset_px` 等最小参数
+
 ### 7.9 `scripts/run_headless.sh`
 
 当前 headless 启动脚本，负责：
@@ -237,9 +250,9 @@ read -> detect -> send -> display
 - detector 模块化
   默认 Haar 后端已抽离到独立目录
 - 最小状态化
-  主循环已具备模式切换、去抖 / 滞回和最小 no-target 策略
+  主循环已具备模式切换、去抖 / 滞回、主动搜索与最小 no-target 策略
 - 双端状态闭环
-  STM32 已接上 heartbeat / no-target / link-timeout safe hold
+  STM32 已接上 heartbeat / no-target / mode command / link-timeout safe hold
 - 部署收口
   提供 `run_headless.sh`、service 安装/卸载脚本和设备发现脚本
 
@@ -253,8 +266,8 @@ read -> detect -> send -> display
 - detector 只完成模块化结构，没有引入重依赖或第二个模型
 - 当前默认检测算法仍是 Haar，最大人脸选择逻辑未改变
 - 未改变主流程的基本顺序
-- `scan` 当前仅保留占位，没有真实动作
-- `CMD_SET_MODE` 当前仅预留，不依赖它完成主功能
+- 协议仍然保持单向最小链路，没有 ACK / 状态回传
+- STM32 不负责生成 scan 轨迹，scan 目标点仍由 RK3588 生成
 
 ## 10. 当前架构优势
 
@@ -277,7 +290,7 @@ read -> detect -> send -> display
 - 设备发现当前只做到脚本提示，不做运行时自动绑定
 - 当前视觉算法仍是传统 OpenCV Haar Cascade
 - 当前仅有一个实际 detector 实现
-- `scan` 与完整 mode command 闭环尚未落地
+- 当前仍没有 ACK / 回传协议
 - 当前部署脚本是最小 systemd 安装方案，不是复杂运维框架
 
 ### 11.2 后续方向

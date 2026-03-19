@@ -6,23 +6,23 @@
 
 - RK3588 如何向 STM32 发送目标与状态信息
 - STM32 当前如何解析并消费这些协议帧
-- v1.5 到当前 v2.0 第一轮收口阶段，协议层实际新增了哪些能力
+- 到当前 v3.0 阶段，协议层实际承担了哪些最小模式闭环能力
 
 当前协议仍然是单向主链路，主要服务于视觉云台最小闭环，不是完整的双向控制总线，也没有 ACK、序列重传或复杂错误恢复设计。
 
 ## 2. 当前阶段能力变化
 
-相对 v1.5，当前 v2.0 第一轮在协议层新增了最小状态化能力：
+相对早期仅发送坐标的版本，当前 v3.0 在协议层已经具备最小状态化与 mode 闭环能力：
 
 - 增加 `CMD_HEARTBEAT (0x01)`，用于链路保活
 - 增加 `CMD_NO_TARGET (0x05)`，用于显式通知“当前无目标”
+- 复用 `CMD_SET_MODE (0x06)`，用于 `track / hold / scan / return_home` 模式下发
 - RK3588 侧支持按配置节流发送 heartbeat / no-target
-- STM32 侧增加 link timeout 后的最小 safe hold
+- RK3588 侧在 `scan` 状态下继续复用 `CMD_TRACK_FACE` 下发扫描坐标
+- STM32 侧增加最小 auto mode 消费与 link timeout safe hold
 
 当前仍未形成的能力包括：
 
-- `CMD_SET_MODE (0x06)` 的完整上下位机模式闭环
-- scan 动作闭环
 - 下位机回传状态
 - ACK / CRC / 重传机制
 
@@ -60,7 +60,7 @@
 | `0x03` | `CMD_SET_ANGLE` | 打包接口保留 | 已实现，作为手动角度控制命令 |
 | `0x04` | `CMD_SET_EXPRESSION` | 打包接口保留 | 已实现最小解析 |
 | `0x05` | `CMD_NO_TARGET` | 已实现，可按配置发送 | 已实现，进入最小 safe hold 语义 |
-| `0x06` | `CMD_SET_MODE` | 打包接口已保留 | 仅保留接收，不驱动完整模式逻辑 |
+| `0x06` | `CMD_SET_MODE` | 已实现，按模式变化与节流重发 | 已实现，更新 auto mode 并约束控制语义 |
 
 ## 5. 各命令 payload 定义
 
@@ -180,22 +180,23 @@ payload 结构：
 
 当前状态：
 
-- RK3588 侧已有 `pack_mode()`
-- STM32 侧仅保留接收入口并刷新链路活跃时间
-- 当前版本没有依赖该命令完成主功能
+- RK3588 侧已有 `pack_mode()`，并在主循环中通过 `send_mode()` 实际发送
+- STM32 侧会保存当前 `auto mode`
+- `HOLD` 下会停止 PID 推进
+- `TRACK / SCAN` 继续沿用现有坐标消费链，`RETURN_HOME` 走下位机本地回中
 
 ## 6. RK3588 当前发送行为
 
 当前行为由 `Software_RK3588/main.py` 与 `Software_RK3588/app/serial_ctrl.py` 决定：
 
 - `CMD_TRACK_FACE`
-  当 detector 输出目标且状态机允许进入 `track` 时发送
+  当 detector 输出目标且状态机允许进入 `track` 时发送；在 `scan` 状态下也会复用这条命令发送扫描目标点
 - `CMD_HEARTBEAT`
   主循环每轮都会调用 `send_heartbeat()`，但只有 `protocol.heartbeat_enabled=true` 且达到节流间隔时才真的发送
 - `CMD_NO_TARGET`
-  仅在进入 no-target 分支时按节流发送；默认 `protocol.no_target_enabled=false`
+  主要在进入 `hold` / no-target 分支时按节流发送；进入 `scan` / `return_home` 后不再持续发送，避免覆盖执行链
 - `CMD_SET_MODE`
-  当前主循环未使用
+  模式变化时立即发送，并按 `mode_command_interval_sec` 保守重发
 - `CMD_SET_ANGLE` / `CMD_SET_EXPRESSION`
   当前主循环未使用，属于保留接口
 
@@ -205,7 +206,7 @@ payload 结构：
 - `no_target_enabled = false`
 - `mode_command_enabled = false`
 
-因此默认行为仍尽量接近 v1.5，只是在主循环内部已经具备 v2.0 最小状态机和去抖逻辑。
+因此默认 `default.yaml` 仍尽量接近 v2.5；如需启用 v3.0 主动搜索链路，建议使用 `configs/v3_0.yaml`。
 
 ## 7. STM32 当前消费行为
 
@@ -220,8 +221,8 @@ payload 结构：
 ### 7.2 no-target
 
 - 收到合法 no-target 后将 `g_target_available` 置 `0`
+- 将 auto mode 切到 `HOLD`
 - 控制任务在自动模式下停止继续按旧目标做 PID 推动
-- 当前 safe 行为是 hold 当前输出，而不是主动 scan 或复杂归位
 
 ### 7.3 link timeout
 
@@ -240,22 +241,30 @@ payload 结构：
 
 - 不继续基于旧目标推进 PID
 - 保持当前 PWM / 云台姿态
-- 不自动触发 scan
-- 不自动形成完整 return-home 策略
+- OLED 显示 `SAFE`
+- 不自动触发 scan，不替代 RK3588 的模式状态机
+
+### 7.5 mode command 的最小闭环语义
+
+- `TRACK`
+  STM32 允许消费来自 RK3588 的实时目标坐标
+- `HOLD`
+  STM32 停止 PID 推进，保持当前姿态
+- `SCAN`
+  STM32 继续消费 RK3588 生成的扫描坐标，不自己生成 scan 轨迹
+- `RETURN_HOME`
+  STM32 在本地将双轴 PWM 平滑拉回物理中位，不再消费 RK3588 下发的视觉坐标
 
 ## 8. 当前限制与后续方向
 
 当前仍有限制：
 
-- `CMD_SET_MODE` 仅是预留接口，不是完整模式控制闭环
-- `scan` 还没有真实动作实现
 - 协议仍是单向主链路，没有下位机回传
 - 校验仍是简单字节和，不是 CRC
 - 没有 ACK / 重传 / 序列同步机制
 
 后续如果继续扩展，可以考虑：
 
-- 将 mode command 真正接入上下位机控制链路
 - 增加更清晰的状态遥测或最小回传
 - 按需要升级校验方式
 - 在不破坏当前最小闭环的前提下逐步扩展更多 detector 或控制模式

@@ -46,4 +46,10 @@ void pid_S_Y(float true_S, float tar_S);
   */
 void PID_Sync_Current_PWM(int pwm_x, int pwm_y);
 
+/**
+  * @brief  平滑驱动双轴 PWM 回到物理中位
+  * @note   用于 AUTO_MODE_RETURN_HOME，避免把“回中”误当作视觉坐标闭环
+  */
+void PID_Move_Towards_Center(void);
+
 #endif

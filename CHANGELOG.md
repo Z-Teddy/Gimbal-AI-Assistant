@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.0 - 模式闭环与主动搜索原型
+
+### 新增
+- 补齐 `track / hold / scan / return_home` 四态最小 mode command 闭环
+- RK3588 在主循环内实现真实 `scan` 行为，按时间生成左右往返扫描目标点
+- `return_home` 从一次性发 home 坐标升级为短时持续发送 home 坐标
+- 新增 `configs/v3_0.yaml`，用于 v3.0 联调与演示
+
+### 改进
+- RK3588 保持 `read -> detect -> send -> display` 主链不变，只在现有状态机基础上扩展主动搜索链路
+- STM32 新增最小 auto mode 消费：`TRACK / HOLD / SCAN / HOME`，并在 OLED 上显示 `TRK / HOLD / SCAN / HOME / VOICE / SAFE`
+- `HOLD` 获得真实语义：停止 PID 推进并保持当前姿态
+- 串口重连后可通过 mode 周期重发完成最小状态重同步
+
+### 当前版本定位
+v3.0 在现有 `haar_face / retinaface / RKNNLite / NPU` 感知基础上，把系统从“最小异构视觉云台”推进到了“具备模式闭环和主动搜索行为的异构嵌入式系统原型”。
+
 ## v2.5 - RetinaFace detector 接入
 
 ### 新增
