@@ -1,0 +1,18 @@
+extends: "runtime_tracking.yaml"
+
+voice:
+  enabled: true
+  device_keyword: "USB PnP Sound Device"
+  cooldown_sec: 1.5
+  debug: true
+  max_speech_sec: 4.0
+  vad_threshold: 0.20
+  min_speech_sec: 0.20
+  silence_sec: 0.35
+  input_gain: 8.0
+  override:
+    track_sec: 2.5
+    hold_sec: 10.0
+    scan_sec: 5.0
+    home_sec: 3.0
+    log_blocked_transitions: true

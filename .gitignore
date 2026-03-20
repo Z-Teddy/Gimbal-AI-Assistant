@@ -45,3 +45,6 @@ docs_private/
 # external reference code (read-only, not part of main project)
 external_refs/*
 !external_refs/README.md
+
+# v4.0 local ASR assets
+Software_RK3588/models/asr/

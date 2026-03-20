@@ -29,22 +29,36 @@
 read -> detect -> send -> display
 ```
 
-当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v3.0：在 v2.5 的 RetinaFace / RKNNLite detector 基础上，补齐模式闭环与主动搜索链路**。
+当前公开代码已经从 v1.5 的 RK3588 Linux 工程化基线，推进到 **v4.0：在 v3.0 模式闭环与主动搜索链路基础上，补齐本地实时语音命令输入并接入主程序运行时**。
 
-## v3.0 新增能力
+## v4.0 新增能力
 
-在 v2.5 第一轮感知收口基础上，当前仓库补齐了面向演示与联调的模式闭环能力：
+在 v3.0 第一轮模式闭环基础上，当前仓库补齐了面向 GUI / headless 联调与演示的本地实时语音能力：
 
-- `scan` 从日志占位升级为真实左右往返扫描动作
-- startup 无目标时保持稳定待机，不直接切入 lost 搜索链
-- 主动 `scan` 默认只在至少成功见过一次目标后，作为目标丢失后的搜索动作触发
-- RK3588 -> STM32 的 `CMD_SET_MODE` 形成最小闭环
-- 系统可跑通：
-  `target lost -> hold -> scan -> target reacquired -> track`
-- 系统可跑通：
-  `target lost -> hold -> scan timeout -> return_home -> hold`
-- STM32 OLED 增加 `TRK / HOLD / SCAN / HOME / VOICE / SAFE` 最小状态显示
-- 提供 `configs/v3_0.yaml` 作为 v3.0 联调与演示配置
+- 新增 `app/voice/` 模块，包含 SenseVoice ASR、Silero VAD、命令词解析与主程序桥接
+- 新增实时语音线程，并通过线程安全队列把语音命令交回主线程消费
+- 语音命令可直接驱动现有 `TRACK / HOLD / SCAN / RETURN_HOME` 模式主链路
+- 新增 `OPEN_CAMERA / CLOSE_CAMERA` 语义，并接入主线程 camera runtime
+- 新增 `voice override` 机制，避免语音 mode 被自动状态机立即抢回
+- 新增 `tools/voice_realtime_test.py` 与 `scripts/run_voice.sh`
+- 提供“基础配置 + 场景配置”结构，避免继续按版本号维护 YAML
+
+## 当前支持的语音命令
+
+- `开始跟踪 / 跟踪 / 跟踪目标 / 追踪` -> `TRACK`
+- `停止 / 停止跟踪 / 停止追踪 / 保持 / 待机` -> `HOLD`
+- `开始扫描 / 扫描 / 搜索目标 / 搜索` -> `SCAN`
+- `回中 / 回到中位 / 归位 / 回家` -> `HOME`
+- `打开摄像头 / 开启摄像头` -> `OPEN_CAMERA`
+- `关闭摄像头 / 关掉摄像头` -> `CLOSE_CAMERA`
+
+## v4.0 能力边界
+
+- 当前语音能力是“本地命令词输入”，不是自由对话助手
+- 当前未引入唤醒词
+- 当前不依赖 LLM
+- 当前优先使用 USB 麦克风演示，板载 MIC 噪声较大
+- 当前语音命令主要面向中文短句控制场景
 
 ## 当前已实现能力 / 项目亮点
 
@@ -58,6 +72,9 @@ read -> detect -> send -> display
 - 主循环去抖 / 滞回优化，降低瞬时漏检导致的 `track <-> hold` 抖动
 - RK3588 侧实现 scan 轨迹生成；STM32 在 `return_home` 模式下执行物理回中
 - 串口链路完成目标坐标、heartbeat、no-target、mode command 的最小状态化发送，并与 STM32 下位机控制逻辑打通
+- 本地实时语音输入：USB 麦克风常驻监听、Silero VAD、SenseVoice 离线识别、命令词解析
+- 语音命令可作为主程序的额外输入模态接入 GUI / headless 运行时
+- `voice override` 机制可在短时间窗口内保护语音 mode 命令，避免自动状态机立即覆盖
 - 已形成从视觉输入、目标中心点生成、串口下发到底层执行的最小功能闭环
 
 ### RK3588 Linux 侧工程化
@@ -68,6 +85,7 @@ read -> detect -> send -> display
 - camera recovery：摄像头连续读帧失败后自动释放并重连
 - serial reconnect：串口初始化失败或发送失败后自动重连
 - `scripts/run_headless.sh`：headless 启动脚本
+- `scripts/run_voice.sh`：语音 + 主程序一体化启动脚本（默认 GUI，可透传 `--headless`）
 - `scripts/install_service.sh` / `scripts/uninstall_service.sh`：systemd 服务安装与卸载
 - `scripts/find_devices.sh`：设备发现与配置提示脚本
 - `services/gimbal-ai.service`：systemd service 模板
@@ -84,6 +102,7 @@ read -> detect -> send -> display
 - RetinaFace RKNNLite 板端单图 smoke test 已通过，可验证模型加载、推理输出、后处理与 `target_center`
 - RetinaFace 已完成 GUI / headless 主程序联调，可正常检测与跟踪人脸
 - RetinaFace 路径下 `track / hold / scan / return_home` 状态机代码路径与现有串口链路保持兼容
+- 实时语音监听、命令解析、主线程桥接、override 与退出流程已完成板端联调
 - 主循环去抖 / 滞回优化已做实测，`track <-> hold` 高频抖动明显降低
 - heartbeat / no-target / mode command / link-timeout safe hold 的最小双端状态闭环已打通
 - 串口中途断开后，serial reconnect 与 camera recovery 链路保持可用
@@ -106,10 +125,12 @@ read -> detect -> send -> display
 1. 摄像头采集图像帧
 2. RK3588 执行 detector 推理（当前支持 `haar_face` / `retinaface`）
 3. 计算主目标中心坐标
-4. 坐标映射到 STM32 控制坐标系
-5. RK3588 在 `scan` 状态下生成扫描目标点；`return_home` 由 STM32 按 mode 执行物理回中
-6. 通过串口发送到 STM32
-7. STM32 接收后按当前 mode 执行底层控制并驱动云台
+4. 语音线程可并行执行 `USB 麦克风 -> VAD -> ASR -> VoiceCommand`
+5. 主线程统一消费视觉状态与语音命令，决定当前 mode / camera 行为
+6. 坐标映射到 STM32 控制坐标系
+7. RK3588 在 `scan` 状态下生成扫描目标点；`return_home` 由 STM32 按 mode 执行物理回中
+8. 通过串口发送到 STM32
+9. STM32 接收后按当前 mode 执行底层控制并驱动云台
 
 更完整的说明见：
 
@@ -154,21 +175,28 @@ Gimbal-AI-Assistant/
 │   │   ├── protocol.py          # 串口协议打包
 │   │   ├── serial_ctrl.py       # 串口发送与自动重连
 │   │   ├── settings.py          # YAML 加载与配置校验
-│   │   └── vision.py            # 视觉兼容包装层
+│   │   ├── vision.py            # 视觉兼容包装层
+│   │   └── voice/               # v4.0 实时语音模块
 │   ├── configs/
-│   │   ├── default.yaml         # 默认兼容配置
-│   │   └── v3_0.yaml            # v3.0 联调 / 演示配置
+│   │   ├── default.yaml         # 基础硬件 / 安全默认配置
+│   │   ├── runtime_tracking.yaml # 视觉闭环场景配置
+│   │   ├── runtime_voice.yaml   # 语音 + 视觉联调主入口
+│   │   └── v3_0.yaml            # 兼容别名，等价转发到 runtime_voice.yaml
 │   ├── logs/                    # 运行日志目录
 │   ├── models/
-│   │   └── retinaface/          # RetinaFace RKNN 模型目录
+│   │   ├── retinaface/          # RetinaFace RKNN 模型目录
+│   │   └── asr/                 # SenseVoice / VAD 模型目录（需自行准备）
 │   ├── scripts/
 │   │   ├── find_devices.sh      # 设备发现脚本
 │   │   ├── install_service.sh   # service 安装脚本
 │   │   ├── run_headless.sh      # headless 启动脚本
+│   │   ├── run_voice.sh         # 语音 + 主程序启动脚本
 │   │   ├── test_retinaface_rknn.py # RetinaFace 单图 smoke test
 │   │   └── uninstall_service.sh # service 卸载脚本
 │   ├── services/
 │   │   └── gimbal-ai.service    # systemd service 模板
+│   ├── tools/
+│   │   └── voice_realtime_test.py # 语音链路独立测试工具
 │   ├── config.py                # 配置兼容层
 │   ├── main.py                  # 程序入口
 │   └── requirements.txt         # Python 依赖
@@ -191,9 +219,20 @@ Gimbal-AI-Assistant/
 ### 2. RK3588 侧环境准备
 
 ```bash
+sudo apt-get update
+sudo apt-get install -y alsa-utils libsndfile1
+
 cd Software_RK3588
 python3 -m pip install -r requirements.txt
 ```
+
+OrangePi / RK3588 板端建议使用单独的 Python 环境，例如 `gimbal` conda 环境或项目虚拟环境。
+
+当前 `requirements.txt` 已包含 v4.0 语音链路需要的 Python 包。安装完成后，建议额外确认环境中能正常导入：
+
+- `numpy`
+- `soundfile`
+- `sherpa_onnx`
 
 如使用虚拟环境，请先激活对应环境；在 headless 场景下，也可以直接使用 `scripts/run_headless.sh` 作为统一启动入口。
 
@@ -211,8 +250,18 @@ bash Software_RK3588/scripts/find_devices.sh
 - `serial.port` 优先填写 `/dev/serial/by-id/*`
 - 当前支持 `detector.type = "haar_face"` 与 `detector.type = "retinaface"`；未准备 `.rknn` 模型文件时可先使用 `haar_face`
 
-如果要直接体验 v3.0 的模式闭环，建议基于 `configs/v3_0.yaml` 联调，而不是直接改动 `default.yaml`。
-当前 `configs/v3_0.yaml` 通过 `extends: default.yaml` 叠加 v3.0 行为开关，会沿用 `default.yaml` 中已有的 `camera` / `serial` / `detector` 配置。
+当前推荐的配置结构是：
+
+- `configs/default.yaml`
+  基础硬件 / detector / runtime 安全默认项
+- `configs/runtime_tracking.yaml`
+  在 `default.yaml` 基础上打开成熟的视觉闭环行为
+- `configs/runtime_voice.yaml`
+  在 `runtime_tracking.yaml` 基础上启用实时语音输入
+
+如果要体验当前主程序集成版 v4.0 联调，建议优先使用 `configs/runtime_voice.yaml`，而不是继续直接编辑 `default.yaml`。
+
+`configs/v3_0.yaml` 目前保留为兼容别名，内部会转发到 `configs/runtime_voice.yaml`，这样旧命令不会立即失效。
 
 ### RetinaFace 模型说明
 
@@ -225,6 +274,52 @@ bash Software_RK3588/scripts/find_devices.sh
   - 转换命令：`python convert.py ../model/RetinaFace_mobile320.onnx rk3588`
 - 官方 RetinaFace 示例与转换说明见：
   - `https://github.com/airockchip/rknn_model_zoo/tree/main/examples/RetinaFace`
+
+说明：
+
+- 模型文件不随仓库发布，需要用户自行准备
+- 若未准备 `.rknn` 模型，可先使用 `haar_face` 路径完成基础联调
+- 具体获取与转换步骤请参考上游官方示例说明
+
+### 语音模型说明
+
+当前 v4.0 使用以下语音模型资源：
+
+#### SenseVoice ASR
+
+- 上游项目：`sherpa-onnx`
+- 当前使用模型：`sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17`
+- 本地目录：
+  `Software_RK3588/models/asr/sherpa/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/`
+- 目录内关键文件：
+  - `model.int8.onnx`
+  - `tokens.txt`
+
+说明：
+
+- 当前仓库不直接分发上述模型文件，需要用户自行准备
+- 代码默认按上述目录结构查找模型
+- 当前离线识别基于 `sherpa_onnx.OfflineRecognizer.from_sense_voice(...)` 调用方式接入
+
+#### Silero VAD
+
+- 上游项目：`Silero VAD`
+- 当前使用模型：`silero_vad.onnx`
+- 本地路径：
+  `Software_RK3588/models/asr/sherpa/silero_vad.onnx`
+
+说明：
+
+- 当前仓库不直接分发该文件，需要用户自行准备
+- 主程序集成版 v4.0 使用该 VAD 模型做实时语音段检测
+
+#### 模型获取说明
+
+上述 ASR / VAD 文件建议按上游项目官方发布页面获取，建议优先从上游官方发布页获取与当前 README 中模型名一致的版本，避免因模型版本差异导致目录结构或接口不一致。
+
+#### 许可证说明
+
+语音模型文件及其许可证遵循对应上游项目；当前仓库主要提供工程集成与运行时接入代码，不直接重新分发模型权利本身。
 
 ### RetinaFace 单图 smoke test
 
@@ -245,14 +340,14 @@ python scripts/test_retinaface_rknn.py --image /path/to/test.jpg
 
 ```bash
 cd Software_RK3588
-python main.py --gui --config configs/default.yaml
+python main.py --gui --config configs/runtime_tracking.yaml
 ```
 
-v3.0 联调推荐命令：
+主程序集成版 v4.0 联调推荐命令：
 
 ```bash
 cd Software_RK3588
-python main.py --gui --config configs/v3_0.yaml
+python main.py --gui --config configs/runtime_voice.yaml
 ```
 
 #### headless 模式
@@ -261,14 +356,14 @@ python main.py --gui --config configs/v3_0.yaml
 
 ```bash
 cd Software_RK3588
-python main.py --headless --config configs/default.yaml
+python main.py --headless --config configs/runtime_tracking.yaml
 ```
 
-v3.0 最小联调命令：
+主程序集成版 v4.0 最小联调命令：
 
 ```bash
 cd Software_RK3588
-python main.py --headless --config configs/v3_0.yaml
+python main.py --headless --config configs/runtime_voice.yaml
 ```
 
 #### `run_headless.sh` 脚本
@@ -279,9 +374,53 @@ python main.py --headless --config configs/v3_0.yaml
 bash Software_RK3588/scripts/run_headless.sh
 ```
 
-#### 安装 systemd 服务
+#### `run_voice.sh` 脚本
+
+适用场景：当前 v4.0 语音 + 视觉主程序集成联调入口，也是最推荐的演示命令。
+
+默认行为：
+
+- 默认补 `--gui`
+- 默认补 `--config configs/runtime_voice.yaml`
+- 若你自己传了 `--headless` 或 `--config ...`，脚本会尊重你的参数，不重复追加
+
+示例：
+
+```bash
+bash Software_RK3588/scripts/run_voice.sh
+```
+
+headless 语音联调：
+
+```bash
+bash Software_RK3588/scripts/run_voice.sh --headless
+```
+
+### 5. 语音链路独立验证
+
+如果你需要单独排查麦克风、VAD、ASR 或命令词解析，可以使用：
+
+```bash
+cd Software_RK3588
+python -u tools/voice_realtime_test.py --debug
+```
+
+如果只想验证离线 wav -> ASR 能力：
+
+```bash
+cd Software_RK3588
+python scripts/decode_wav.py /path/to/test.wav
+```
+
+### 6. 安装 systemd 服务
 
 适用场景：OrangePi / RK3588 长期后台运行。
+
+说明：
+
+- 当前 `install_service.sh` 安装的是保守版 headless service
+- 默认启动参数仍使用 `configs/default.yaml`
+- 如果你希望 service 直接跑 v4.0 语音版，需要额外调整 `services/gimbal-ai.service` 的 `ExecStart`
 
 ```bash
 bash Software_RK3588/scripts/install_service.sh
@@ -293,7 +432,7 @@ bash Software_RK3588/scripts/install_service.sh
 bash Software_RK3588/scripts/uninstall_service.sh
 ```
 
-### 5. 日志查看
+### 7. 日志查看
 
 控制台日志会直接输出到终端，同时也会写入文件：
 
@@ -313,6 +452,8 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 - 串口配置当前仍依赖固定 `serial.port`，虽然现在已提供设备发现脚本
 - 当前已支持 `haar_face` 与 `retinaface` 两种 detector；其中 `retinaface` 第一版固定为 `input_size = 320`
 - RetinaFace 的 landmark 当前仅作为检测附带输出 / 可选绘制，不进入控制链
+- 当前语音能力是本地命令词输入，不是自由对话助手
+- 当前板端语音演示优先使用 USB 麦克风，板载 MIC 噪声较大
 - 当前协议仍是单向主链路，没有下位机状态回传、ACK 或重传机制
 - STM32 侧 `scan` 轨迹依然由 RK3588 生成，并未引入独立扫描控制器
 
@@ -354,19 +495,39 @@ tail -f Software_RK3588/logs/rk3588_tracker.log
 - `return_home` 闭环补齐
 - STM32 最小 mode 消费与 OLED 状态显示
 
-### 阶段 4：更强感知与协议扩展
+### 阶段 4：本地实时语音命令接入
+
+当前已完成的重点包括：
+
+- 实时语音监听线程
+- Silero VAD + SenseVoice 离线识别
+- 语音命令解析与主线程桥接
+- voice override 防抢权
+- GUI / headless 主程序集成联调
+
+### 阶段 5：更强感知与协议扩展
 
 后续可继续推进：
 
 - 更细的状态回传 / ACK / 协议增强
 - RetinaFace 后端进一步稳定性与部署收口
 
-### 阶段 5：向更完整的桌面级智能体形态扩展
+### 阶段 6：向更完整的桌面级智能体形态扩展
 
 更长期的方向包括：
 
 - 在稳定的感知与控制底座上逐步扩展更丰富的交互与任务调度能力
 - 从单一视觉云台系统走向更完整的桌面级嵌入式智能体 / 桌面助手形态
+
+## 第三方模型与来源说明
+
+本项目使用了若干第三方模型/模型转换链路进行工程集成，包括但不限于：
+
+- RetinaFace（RKNN Model Zoo 示例链路）
+- SenseVoice（通过 sherpa-onnx 接入）
+- Silero VAD
+
+这些模型文件不直接随仓库发布。请使用者根据 README 中的目录说明自行准备模型，并遵循对应上游项目的许可证与使用条款。
 
 ## 许可证
 

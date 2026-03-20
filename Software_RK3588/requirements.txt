@@ -1,3 +1,6 @@
 opencv-python>=4.0.0
 pyserial>=3.5
 PyYAML>=6.0
+numpy>=1.23.0
+soundfile>=0.12.1
+sherpa-onnx>=1.12.30

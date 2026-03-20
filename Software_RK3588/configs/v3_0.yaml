@@ -1,24 +1,4 @@
-extends: "default.yaml"
-
-protocol:
-  heartbeat_enabled: true
-  heartbeat_interval_sec: 1.0
-  no_target_enabled: true
-  no_target_interval_sec: 0.2
-  mode_command_enabled: true
-  mode_command_interval_sec: 0.5
-
-control:
-  default_mode: "track"
-  no_target_mode: "scan"
-  target_lost_timeout_sec: 0.5
-  lost_confirm_frames: 3
-  reacquire_confirm_frames: 3
-  home_x: 322
-  home_y: 242
-  scan_enabled: true
-  hold_before_scan_sec: 1.2
-  scan_timeout_sec: 6.0
-  return_home_hold_sec: 2.0
-  scan_period_sec: 3.0
-  scan_offset_px: 120
+# 兼容别名：
+# 旧的 v3_0.yaml 入口保留，避免已有命令或文档直接失效。
+# 当前推荐直接改用 configs/runtime_voice.yaml。
+extends: "runtime_voice.yaml"

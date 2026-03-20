@@ -56,6 +56,23 @@ runtime:
   window_name: "RK3588 AI Tracker"
   display: ":0"
 
+voice:
+  enabled: false
+  device_keyword: "USB PnP Sound Device"
+  cooldown_sec: 1.5
+  debug: false
+  max_speech_sec: 8.0
+  vad_threshold: 0.35
+  min_speech_sec: 0.3
+  silence_sec: 0.6
+  input_gain: 1.0
+  override:
+    track_sec: 2.5
+    hold_sec: 10.0
+    scan_sec: 5.0
+    home_sec: 3.0
+    log_blocked_transitions: true
+
 logging:
   level: "INFO"
   log_dir: "logs"

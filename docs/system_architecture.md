@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文用于说明当前项目的系统组成、数据流、控制流以及 `Software_RK3588` 的软件结构，重点描述当前已经落地的 v3.0 模式闭环、主动搜索与双端协同能力。
+本文用于说明当前项目的系统组成、数据流、控制流以及 `Software_RK3588` 的软件结构，重点描述当前已经落地的 v4.0 视觉闭环、主动搜索、实时语音命令与双端协同能力。
 
 本文基于当前仓库真实代码与真实目录结构撰写，不把后续规划写成既成事实。
 
@@ -19,11 +19,13 @@
 系统当前由以下部分构成：
 
 - RK3588 / OrangePi
-  运行 Linux 侧视觉程序，负责图像采集、人脸检测、坐标生成、日志和运行管理
+  运行 Linux 侧视觉程序与语音线程，负责图像采集、人脸检测、语音识别、坐标生成、日志和运行管理
 - STM32
   接收 RK3588 发来的目标坐标，并执行底层控制逻辑
 - 摄像头
   提供输入图像
+- USB 麦克风
+  提供本地实时语音命令输入
 - 串口链路
   负责 RK3588 与 STM32 之间的坐标通信
 - 云台执行端
@@ -41,6 +43,9 @@
 - 最小模式状态机（`track / hold / scan / return_home`）
 - 主循环去抖 / 滞回
 - scan 轨迹生成与 return_home 模式驱动
+- 实时语音线程（USB 麦克风采集、VAD、ASR、命令词解析）
+- 将语音命令通过线程安全队列交回主线程消费
+- 语音 override 控制，短时保护语音 mode 命令不被自动状态机立即覆盖
 - 按当前协议格式打包并通过串口发送目标坐标、heartbeat、no-target、mode command
 - YAML 配置加载
 - logging
@@ -65,12 +70,13 @@
 1. 摄像头采集图像帧
 2. RK3588 通过 detector 工厂选择当前视觉后端
 3. 对单帧执行检测，并从结果中选择当前主目标
-4. RK3588 主循环状态机判定当前应处于 `track / hold / scan / return_home`
-5. 将视觉坐标映射到 STM32 使用的控制坐标系
-6. 在 `scan` 状态下由 RK3588 生成扫描目标点；在 `return_home` 状态下由 STM32 执行本地物理回中
-7. 打包为串口协议帧
-8. 通过串口发送给 STM32
-9. STM32 接收后根据当前 mode 消费坐标，或进入最小 safe hold
+4. 语音线程并行执行 `USB 麦克风 -> VAD -> ASR -> VoiceCommand`
+5. 主线程统一消费视觉状态与语音命令，判定当前应处于 `track / hold / scan / return_home`
+6. 将视觉坐标映射到 STM32 使用的控制坐标系
+7. 在 `scan` 状态下由 RK3588 生成扫描目标点；在 `return_home` 状态下由 STM32 执行本地物理回中
+8. 打包为串口协议帧
+9. 通过串口发送给 STM32
+10. STM32 接收后根据当前 mode 消费坐标，或进入最小 safe hold
 
 ## 6. 当前主链路
 
@@ -103,6 +109,9 @@ read -> detect -> send -> display
 - 主循环去抖 / 滞回
 - heartbeat / no-target / link-timeout safe hold
 - mode command 最小闭环
+- 实时语音命令输入
+- 语音线程到主线程的桥接消费
+- voice override 防抢权
 - systemd 安装/卸载脚本
 - 设备发现脚本与协议文档
 
@@ -116,7 +125,9 @@ read -> detect -> send -> display
 - 加载配置
 - 初始化 logging
 - 创建视觉、串口、摄像头管理对象
+- 在启用 `voice.enabled` 时创建语音监听线程与主线程桥接
 - 维持主循环与最小模式状态机
+- 在主循环中消费语音命令并应用到现有 runtime
 - 在 `scan` 状态下生成并发送扫描坐标
 - 在 GUI 模式下显示画面
 - 在退出时释放资源
@@ -139,12 +150,21 @@ read -> detect -> send -> display
   定义 `BaseDetector` 与统一的 `DetectionResult`
 - `app/detectors/haar_detector.py`
   当前默认 Haar 检测实现
+- `app/detectors/rknn_retinaface.py`
+  RK3588 NPU / RKNNLite RetinaFace 实现
+- `app/detectors/retinaface_postprocess.py`
+  RetinaFace 后处理、anchor / decode / NMS 逻辑
 - `app/detectors/__init__.py`
   提供 `create_detector(settings)` 工厂
 - `app/vision.py`
   保留兼容包装层，避免旧调用方式立即失效
 
-当前仓库里仍只有 `haar_face` 一个实际 detector，实现的检测逻辑与原先基本保持一致。
+当前仓库已落地两个真实 detector：
+
+- `haar_face`
+  适合作为基础兼容路径与轻量验证路径
+- `retinaface`
+  适合作为当前 v4.0 推荐的人脸检测后端
 
 ### 7.4 `app/serial_ctrl.py`
 
@@ -200,17 +220,30 @@ read -> detect -> send -> display
 - control 参数
 - runtime 参数
 - logging 参数
+- voice 参数
 
 它是当前运行参数的主要入口。
 
-### 7.8.1 `configs/v3_0.yaml`
+### 7.8.1 `configs/runtime_tracking.yaml`
 
-额外提供了 v3.0 联调配置文件，用于：
+额外提供了成熟视觉闭环场景配置，用于：
 
 - 通过 `extends: default.yaml` 继承当前默认硬件与 detector 配置
 - 打开 `heartbeat / no-target / mode command`
 - 启用 `scan`
 - 提供 `hold_before_scan_sec`、`scan_timeout_sec`、`return_home_hold_sec`、`scan_period_sec`、`scan_offset_px` 等最小参数
+
+### 7.8.2 `configs/runtime_voice.yaml`
+
+在 `runtime_tracking.yaml` 基础上进一步打开 `voice.enabled`，用于当前语音 + 视觉主程序集成联调。
+
+该配置当前还包含：
+
+- USB 麦克风关键字
+- 语音 cooldown
+- `max_speech_sec`、`vad_threshold`、`min_speech_sec`、`silence_sec`
+- `input_gain`
+- `voice.override.track_sec / hold_sec / scan_sec / home_sec`
 
 ### 7.9 `scripts/run_headless.sh`
 
@@ -251,6 +284,8 @@ read -> detect -> send -> display
   默认 Haar 后端已抽离到独立目录
 - 最小状态化
   主循环已具备模式切换、去抖 / 滞回、主动搜索与最小 no-target 策略
+- 本地实时语音输入
+  USB 麦克风、VAD、离线 ASR、命令词解析、主线程桥接与 override 保护
 - 双端状态闭环
   STM32 已接上 heartbeat / no-target / mode command / link-timeout safe hold
 - 部署收口

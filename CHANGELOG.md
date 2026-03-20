@@ -1,5 +1,30 @@
 # Changelog
 
+## v4.0 - 实时语音命令主程序集成版
+
+### 新增
+- 新增 `Software_RK3588/app/voice/` 模块，包含 SenseVoice 离线识别封装、Silero VAD、命令词解析、运行时桥接与 override 控制
+- 新增本地实时语音输入链路：`USB 麦克风 -> VAD -> ASR -> VoiceCommand -> 主线程队列 -> 现有 runtime`
+- 新增 `Software_RK3588/tools/voice_realtime_test.py`，用于语音链路独立排障与联调
+- 新增 `Software_RK3588/scripts/run_voice.sh`，作为语音 + 视觉主程序集成入口
+- 新增 `Software_RK3588/configs/runtime_voice.yaml`，用于 v4.0 GUI / headless 联调与演示
+
+### 改进
+- 语音线程已接入 `main.py` 主运行时，GUI / headless 两种模式均可使用
+- 语音命令通过线程安全队列交回主线程消费，不再维护第二套平行 runtime
+- 新增 `voice override` 机制，避免 `TRACK / HOLD / SCAN / HOME` 被自动状态机立即抢回
+- 修复语音监听退出竞态，Ctrl+C 后不再残留 `arecord` 进程或出现 `NoneType.poll` traceback
+- 增加语音联调能力：chunk / RMS / VAD 状态日志、segment 调试落盘、GUI 中的 Voice 状态显示
+- 配置结构升级为“基础配置 + 场景配置”，主推荐入口改为 `configs/runtime_tracking.yaml` 与 `configs/runtime_voice.yaml`
+
+### 兼容性
+- 保留 `configs/v3_0.yaml` 作为兼容别名，内部转发到 `configs/runtime_voice.yaml`
+- 保留 `scripts/decode_wav.py`、`scripts/quick_asr_test.sh`、`tools/voice_realtime_test.py` 作为独立验证入口
+- 语音输入没有引入新的串口协议，仍复用既有 `CMD_SET_MODE` / `send_mode()` 主链路
+
+### 当前版本定位
+v4.0 在 v3.0 视觉模式闭环与主动搜索基础上，把系统推进到“视觉 + 本地实时语音命令双输入”的异构嵌入式交互原型。
+
 ## v3.0 - 模式闭环与主动搜索原型
 
 ### 新增

@@ -67,6 +67,24 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
         "window_name": "RK3588 AI Tracker",
         "display": ":0",
     },
+    "voice": {
+        "enabled": False,
+        "device_keyword": "USB PnP Sound Device",
+        "cooldown_sec": 1.5,
+        "debug": False,
+        "max_speech_sec": 8.0,
+        "vad_threshold": 0.35,
+        "min_speech_sec": 0.3,
+        "silence_sec": 0.6,
+        "input_gain": 1.0,
+        "override": {
+            "track_sec": 2.5,
+            "hold_sec": 10.0,
+            "scan_sec": 5.0,
+            "home_sec": 3.0,
+            "log_blocked_transitions": True,
+        },
+    },
     "logging": {
         "level": "INFO",
         "log_dir": "logs",
@@ -144,6 +162,7 @@ def _validate_settings(settings: Dict[str, Any]) -> None:
     protocol = _require_dict(settings, "protocol")
     control = _require_dict(settings, "control")
     runtime = _require_dict(settings, "runtime")
+    voice = _require_dict(settings, "voice")
     logging_cfg = _require_dict(settings, "logging")
 
     _require_int(camera, "index", minimum=0)
@@ -198,6 +217,26 @@ def _validate_settings(settings: Dict[str, Any]) -> None:
     display = runtime.get("display")
     if display is not None and not isinstance(display, str):
         raise ValueError("配置项 'runtime.display' 必须是字符串或 null")
+
+    _require_bool(voice, "enabled")
+    _require_str(voice, "device_keyword")
+    _require_number(voice, "cooldown_sec", minimum=0.0)
+    _require_bool(voice, "debug")
+    _require_positive_number(voice, "max_speech_sec")
+    _require_number(voice, "vad_threshold", minimum=0.0)
+    if float(voice.get("vad_threshold")) >= 1.0:
+        raise ValueError("配置项 'voice.vad_threshold' 必须小于 1")
+    _require_number(voice, "min_speech_sec", minimum=0.0)
+    _require_number(voice, "silence_sec", minimum=0.0)
+    if float(voice.get("max_speech_sec")) <= float(voice.get("min_speech_sec")):
+        raise ValueError("配置项 'voice.max_speech_sec' 必须大于 'voice.min_speech_sec'")
+    _require_positive_number(voice, "input_gain")
+    voice_override = _require_dict(voice, "override")
+    _require_number(voice_override, "track_sec", minimum=0.0)
+    _require_number(voice_override, "hold_sec", minimum=0.0)
+    _require_number(voice_override, "scan_sec", minimum=0.0)
+    _require_number(voice_override, "home_sec", minimum=0.0)
+    _require_bool(voice_override, "log_blocked_transitions")
 
     _require_str(logging_cfg, "level")
     _require_str(logging_cfg, "log_dir")
